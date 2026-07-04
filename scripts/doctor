@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+update_state_dir="${CK3QQBOT_UPDATE_STATE_DIR:-/update-state}"
+ready_marker="${CK3QQBOT_READY_PATH:-${update_state_dir}/READY}"
+force_start="${CK3QQBOT_FORCE_START:-false}"
+
+if [[ -e "${update_state_dir}/.updating" ]]; then
+  if [[ "${force_start}" == "true" || "${force_start}" == "1" ]]; then
+    echo "force-start enabled; ignoring update marker: ${update_state_dir}/.updating" >&2
+    echo "doctor ok"
+    exit 0
+  fi
+  echo "knowledge update marker exists: ${update_state_dir}/.updating" >&2
+  exit 20
+fi
+
+if [[ ! -e "${ready_marker}" ]]; then
+  if [[ "${force_start}" == "true" || "${force_start}" == "1" ]]; then
+    echo "force-start enabled; ignoring missing READY marker: ${ready_marker}" >&2
+    echo "doctor ok"
+    exit 0
+  fi
+  echo "READY marker is missing: ${ready_marker}" >&2
+  exit 21
+fi
+
+echo "doctor ok"

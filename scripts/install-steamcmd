@@ -1,0 +1,91 @@
+#!/usr/bin/env sh
+set -eu
+
+steamcmd_url="${STEAMCMD_URL:-https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz}"
+steamcmd_sha256="${STEAMCMD_SHA256:-}"
+install_root="${STEAMCMD_INSTALL_ROOT:-/opt/steamcmd}"
+bin_dir="${STEAMCMD_BIN_DIR:-/usr/local/bin}"
+tmp_dir="$(mktemp -d)"
+
+cleanup() {
+  rm -rf "$tmp_dir"
+}
+trap cleanup EXIT INT TERM
+
+download() {
+  url="$1"
+  output="$2"
+
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL "$url" -o "$output"
+    return
+  fi
+
+  if command -v wget >/dev/null 2>&1; then
+    wget -q -O "$output" "$url"
+    return
+  fi
+
+  echo "curl or wget is required to install SteamCMD." >&2
+  exit 2
+}
+
+sha256_file() {
+  path="$1"
+
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$path" | awk '{print $1}'
+    return
+  fi
+
+  if command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$path" | awk '{print $1}'
+    return
+  fi
+
+  if command -v openssl >/dev/null 2>&1; then
+    openssl dgst -sha256 "$path" | sed 's/^.*= //'
+    return
+  fi
+
+  echo "sha256sum, shasum, or openssl is required to verify SteamCMD." >&2
+  exit 3
+}
+
+archive_path="$tmp_dir/steamcmd_linux.tar.gz"
+stage_dir="$tmp_dir/stage"
+
+echo "Installing SteamCMD from ${steamcmd_url}"
+download "$steamcmd_url" "$archive_path"
+
+if [ -n "$steamcmd_sha256" ]; then
+  actual="$(sha256_file "$archive_path")"
+  if [ "$actual" != "$steamcmd_sha256" ]; then
+    echo "checksum mismatch for SteamCMD archive" >&2
+    echo "expected: $steamcmd_sha256" >&2
+    echo "actual:   $actual" >&2
+    exit 4
+  fi
+fi
+
+mkdir -p "$stage_dir"
+tar -xzf "$archive_path" -C "$stage_dir"
+
+if [ ! -f "$stage_dir/steamcmd.sh" ]; then
+  echo "SteamCMD archive is missing steamcmd.sh" >&2
+  exit 5
+fi
+
+rm -rf "$install_root"
+mkdir -p "$(dirname "$install_root")"
+mv "$stage_dir" "$install_root"
+
+mkdir -p "$bin_dir"
+cat > "$bin_dir/steamcmd" <<EOF
+#!/usr/bin/env sh
+exec "$install_root/steamcmd.sh" "\$@"
+EOF
+chmod 0755 "$bin_dir/steamcmd"
+
+echo "SteamCMD installed at ${install_root}"
+

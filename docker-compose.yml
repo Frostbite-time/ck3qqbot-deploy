@@ -1,0 +1,171 @@
+services:
+  runtime:
+    build:
+      context: .
+      dockerfile: Dockerfile.runtime
+    environment:
+      ONEBOT_WS_URL: ${CK3QQBOT_ONEBOT_WS_URL:-ws://host.docker.internal:3001}
+      ONEBOT_TOKEN: ${CK3QQBOT_ONEBOT_TOKEN:-}
+      CLAUDE_CONFIG_DIR: ${CK3QQBOT_CLAUDE_HOME:-/runtime/claude-home}
+      DISABLE_AUTOUPDATER: "1"
+      CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: "1"
+      CLAUDE_PROVIDER_API_KEY: ${CK3QQBOT_CLAUDE_PROVIDER_API_KEY:-}
+      CLAUDE_PROVIDER_BASE_URL: ${CK3QQBOT_CLAUDE_PROVIDER_BASE_URL:-https://example.com}
+      CLAUDE_PROVIDER_MODEL: ${CK3QQBOT_CLAUDE_PROVIDER_MODEL:?set CK3QQBOT_CLAUDE_PROVIDER_MODEL in .env}
+      CK3QQBOT_STEAMCMD_MCP_PORT: ${CK3QQBOT_STEAMCMD_MCP_PORT:?set CK3QQBOT_STEAMCMD_MCP_PORT in .env}
+      CK3QQBOT_STEAMCMD_MCP_TOKEN: ${CK3QQBOT_STEAMCMD_MCP_TOKEN:?set CK3QQBOT_STEAMCMD_MCP_TOKEN in .env}
+      CK3QQBOT_ONEBOT_MCP_PORT: ${CK3QQBOT_ONEBOT_MCP_PORT:-3000}
+      CK3QQBOT_ONEBOT_MCP_TOKEN: ${CK3QQBOT_ONEBOT_MCP_TOKEN:-change-me}
+      CK3QQBOT_CC_CONNECT_CONFIG_SRC: ${CK3QQBOT_CC_CONNECT_CONFIG_SRC:-/config-input/cc-connect.toml}
+      CK3QQBOT_CLAUDE_SETTINGS_SRC: ${CK3QQBOT_CLAUDE_SETTINGS_SRC:-/config-input/claude-settings.json}
+      CK3QQBOT_CLAUDE_MD_SRC: ${CK3QQBOT_CLAUDE_MD_SRC:-/config-input/CLAUDE.md}
+      CK3QQBOT_CLAUDE_HOME: ${CK3QQBOT_CLAUDE_HOME:-/runtime/claude-home}
+      CK3QQBOT_RUNTIME_USER: ${CK3QQBOT_RUNTIME_USER:-node}
+      CK3QQBOT_RUNTIME_CONFIRM_TIMEOUT_SEC: ${CK3QQBOT_RUNTIME_CONFIRM_TIMEOUT_SEC:-120}
+      CK3QQBOT_RUNTIME_WATCHDOG_INTERVAL_SEC: ${CK3QQBOT_RUNTIME_WATCHDOG_INTERVAL_SEC:-2}
+      CK3QQBOT_RUNTIME_SHUTDOWN_TIMEOUT_SEC: ${CK3QQBOT_RUNTIME_SHUTDOWN_TIMEOUT_SEC:-30}
+      CK3QQBOT_RUNTIME_RESTART_DELAY_SEC: ${CK3QQBOT_RUNTIME_RESTART_DELAY_SEC:-10}
+    volumes:
+      - ${CK3QQBOT_CONFIG_INPUT:-./config}:/config-input:ro
+      - ${CK3QQBOT_RUNTIME_STATE:-./runtime}:/runtime
+      - ${CK3QQBOT_KNOWLEDGE:-./knowledge}:/knowledge:ro
+      - ${CK3QQBOT_KNOWLEDGE:-./knowledge}:/bot/knowledge:ro
+      - ${CK3QQBOT_STEAMCMD_DOWNLOADS:-./steam-downloads}:/bot/steam-downloads
+      - ${CK3QQBOT_ONEBOT_FILES:-./onebot-files}:/bot/onebot-files
+      - ${CK3QQBOT_BOT_MEMORY:-./bot-memory}:/bot/bot-memory
+      - ${CK3QQBOT_BOT_TMP:-./bot-tmp}:/bot/bot-tmp
+      - ${CK3QQBOT_UPDATE_STATE:-./update-state}:/update-state
+      - ${CK3QQBOT_MCP:-./mcp}:/mcp
+      - ${CK3QQBOT_REPORTS:-./reports}:/reports
+    security_opt:
+      - seccomp=unconfined
+      - apparmor=unconfined
+      - systempaths=unconfined
+    command: ["/usr/local/bin/ck3qqbot-start"]
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - steamcmd-sidecar
+      - onebot-mcp
+
+  onebot-mcp:
+    image: ${CK3QQBOT_ONEBOT_MCP_IMAGE:-ghcr.io/frostbite-time/onebot-mcp:v0.1.2}
+    restart: unless-stopped
+    expose:
+      - "${CK3QQBOT_ONEBOT_MCP_PORT:-3000}"
+    environment:
+      ONEBOT_PLATFORM: ${CK3QQBOT_ONEBOT_MCP_PLATFORM:-napcat}
+      ONEBOT_WS_URL: ${CK3QQBOT_ONEBOT_WS_URL:-ws://host.docker.internal:3001}
+      ONEBOT_HTTP_URL: ${CK3QQBOT_ONEBOT_HTTP_URL:-}
+      ONEBOT_TOKEN: ${CK3QQBOT_ONEBOT_TOKEN:-}
+      ONEBOT_ACTION_TIMEOUT_MS: ${CK3QQBOT_ONEBOT_MCP_ACTION_TIMEOUT_MS:-10000}
+      ONEBOT_MCP_HOST: 0.0.0.0
+      ONEBOT_MCP_PORT: ${CK3QQBOT_ONEBOT_MCP_PORT:-3000}
+      ONEBOT_MCP_PATH: ${CK3QQBOT_ONEBOT_MCP_PATH:-/mcp}
+      ONEBOT_MCP_TOKEN: ${CK3QQBOT_ONEBOT_MCP_TOKEN:-change-me}
+      ONEBOT_MCP_ALLOWED_ORIGINS: ${CK3QQBOT_ONEBOT_MCP_ALLOWED_ORIGINS:-}
+      ONEBOT_MCP_MAX_BODY_BYTES: ${CK3QQBOT_ONEBOT_MCP_MAX_BODY_BYTES:-1048576}
+    volumes:
+      - ${CK3QQBOT_ONEBOT_FILES:-./onebot-files}:/bot/onebot-files
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- \"http://127.0.0.1:$${ONEBOT_MCP_PORT:-3000}/healthz\" >/dev/null"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  steamcmd-sidecar:
+    build:
+      context: .
+      dockerfile: Dockerfile.steamcmd-sidecar
+    restart: unless-stopped
+    expose:
+      - "${CK3QQBOT_STEAMCMD_MCP_PORT:?set CK3QQBOT_STEAMCMD_MCP_PORT in .env}"
+    volumes:
+      - ${CK3QQBOT_STEAMCMD_STATE:-./steamcmd}:/steam
+      - ${CK3QQBOT_STEAMCMD_DOWNLOADS:-./steam-downloads}:/downloads
+      - ${CK3QQBOT_KNOWLEDGE:-./knowledge}:/knowledge
+      - ${CK3QQBOT_REPORTS:-./reports}:/reports
+    environment:
+      CK3QQBOT_STEAMCMD_MCP_HOST: 0.0.0.0
+      CK3QQBOT_STEAMCMD_MCP_PORT: ${CK3QQBOT_STEAMCMD_MCP_PORT:?set CK3QQBOT_STEAMCMD_MCP_PORT in .env}
+      CK3QQBOT_STEAMCMD_MCP_TOKEN: ${CK3QQBOT_STEAMCMD_MCP_TOKEN:?set CK3QQBOT_STEAMCMD_MCP_TOKEN in .env}
+      CK3QQBOT_STEAMCMD_MCP_MAX_DOWNLOAD_KIB: ${CK3QQBOT_STEAMCMD_MCP_MAX_DOWNLOAD_KIB:-0}
+      CK3QQBOT_STEAMCMD_MCP_RUNTIME_DOWNLOAD_ROOT: ${CK3QQBOT_STEAMCMD_MCP_RUNTIME_DOWNLOAD_ROOT:-/bot/steam-downloads}
+      CK3QQBOT_STEAMCMD_MCP_PREFLIGHT_TIMEOUT_SEC: ${CK3QQBOT_STEAMCMD_MCP_PREFLIGHT_TIMEOUT_SEC:-60}
+      CK3QQBOT_STEAMCMD_APP_INFO_OUTPUT_MAX_BYTES: ${CK3QQBOT_STEAMCMD_APP_INFO_OUTPUT_MAX_BYTES:-20971520}
+      CK3QQBOT_STEAM_WORKSHOP_DETAILS_URL: ${CK3QQBOT_STEAM_WORKSHOP_DETAILS_URL:-https://api.steampowered.com/ISteamRemoteStorage/GetPublishedFileDetails/v1/}
+      CK3QQBOT_STEAMCMD_INTERNAL_TOKEN: ${CK3QQBOT_STEAMCMD_INTERNAL_TOKEN:?set CK3QQBOT_STEAMCMD_INTERNAL_TOKEN in .env}
+      CK3QQBOT_STEAM_USER: ${CK3QQBOT_STEAM_USER:-}
+      CK3QQBOT_STEAMCMD_HOME: /steam
+      CK3QQBOT_STEAMCMD_DOWNLOAD_ROOT: /downloads
+      CK3QQBOT_KNOWLEDGE_DIR: /knowledge
+      CK3QQBOT_STEAM_SMOKE_APP_ID: ${CK3QQBOT_STEAM_SMOKE_APP_ID:-1079000}
+      CK3QQBOT_STEAM_SMOKE_WORKSHOP_ITEM_ID: ${CK3QQBOT_STEAM_SMOKE_WORKSHOP_ITEM_ID:-2339078416}
+      CK3QQBOT_STEAM_SMOKE_MIN_FREE_KIB: ${CK3QQBOT_STEAM_SMOKE_MIN_FREE_KIB:-1048576}
+
+  updater:
+    build:
+      context: .
+      dockerfile: Dockerfile.updater
+    volumes:
+      - ${CK3QQBOT_CONFIG_INPUT:-./config}:/config-input:ro
+      - ${CK3QQBOT_KNOWLEDGE:-./knowledge}:/knowledge
+      - ${CK3QQBOT_UPDATE_STATE:-./update-state}:/update-state
+      - ${CK3QQBOT_REPORTS:-./reports}:/reports
+    environment:
+      COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME:-ck3qqbot}
+      CK3QQBOT_STEAMCMD_API_URL: http://steamcmd-sidecar:${CK3QQBOT_STEAMCMD_MCP_PORT:?set CK3QQBOT_STEAMCMD_MCP_PORT in .env}
+      CK3QQBOT_STEAMCMD_INTERNAL_TOKEN: ${CK3QQBOT_STEAMCMD_INTERNAL_TOKEN:?set CK3QQBOT_STEAMCMD_INTERNAL_TOKEN in .env}
+      CK3QQBOT_STEAM_APP_ID: ${CK3QQBOT_STEAM_APP_ID:-1158310}
+      CK3QQBOT_BASE_GAME_DEPOT_IDS: ${CK3QQBOT_BASE_GAME_DEPOT_IDS-1158311}
+      CK3QQBOT_WORKSHOP_MOD_IDS: ${CK3QQBOT_WORKSHOP_MOD_IDS:-}
+      CK3QQBOT_MIN_FREE_KIB: ${CK3QQBOT_MIN_FREE_KIB:-0}
+      CK3QQBOT_CLEAN_BEFORE_UPDATE: ${CK3QQBOT_CLEAN_BEFORE_UPDATE:-false}
+      CK3QQBOT_PRUNE_DRY_RUN: ${CK3QQBOT_PRUNE_DRY_RUN:-true}
+      CK3QQBOT_MAX_DELETE_RATIO: ${CK3QQBOT_MAX_DELETE_RATIO:-0.95}
+      CK3QQBOT_DELETE_EMPTY_DIRS: ${CK3QQBOT_DELETE_EMPTY_DIRS:-true}
+      CK3QQBOT_STEAMCMD_PROGRESS_INTERVAL_SEC: ${CK3QQBOT_STEAMCMD_PROGRESS_INTERVAL_SEC:-30}
+      CK3QQBOT_STEAMCMD_TASK_POLL_SEC: ${CK3QQBOT_STEAMCMD_TASK_POLL_SEC:-2}
+      CK3QQBOT_STEAM_USER: ${CK3QQBOT_STEAM_USER:-}
+    command: ["/usr/local/bin/ck3qqbot-update-now"]
+    profiles: ["update"]
+    depends_on:
+      - steamcmd-sidecar
+
+  updater-scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile.updater
+    restart: unless-stopped
+    volumes:
+      - ${CK3QQBOT_CONFIG_INPUT:-./config}:/config-input:ro
+      - ${CK3QQBOT_KNOWLEDGE:-./knowledge}:/knowledge
+      - ${CK3QQBOT_UPDATE_STATE:-./update-state}:/update-state
+      - ${CK3QQBOT_REPORTS:-./reports}:/reports
+    environment:
+      COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME:-ck3qqbot}
+      CK3QQBOT_STEAMCMD_API_URL: http://steamcmd-sidecar:${CK3QQBOT_STEAMCMD_MCP_PORT:?set CK3QQBOT_STEAMCMD_MCP_PORT in .env}
+      CK3QQBOT_STEAMCMD_INTERNAL_TOKEN: ${CK3QQBOT_STEAMCMD_INTERNAL_TOKEN:?set CK3QQBOT_STEAMCMD_INTERNAL_TOKEN in .env}
+      CK3QQBOT_UPDATE_INTERVAL_SEC: ${CK3QQBOT_UPDATE_INTERVAL_SEC:-86400}
+      CK3QQBOT_UPDATE_RUN_ON_START: ${CK3QQBOT_UPDATE_RUN_ON_START:-false}
+      CK3QQBOT_UPDATE_SCHEDULE_FROM_READY: ${CK3QQBOT_UPDATE_SCHEDULE_FROM_READY:-true}
+      CK3QQBOT_UPDATE_SCHEDULER_POLL_SEC: ${CK3QQBOT_UPDATE_SCHEDULER_POLL_SEC:-300}
+      CK3QQBOT_UPDATE_FAILURE_BACKOFF_SEC: ${CK3QQBOT_UPDATE_FAILURE_BACKOFF_SEC:-60}
+      CK3QQBOT_STEAM_APP_ID: ${CK3QQBOT_STEAM_APP_ID:-1158310}
+      CK3QQBOT_BASE_GAME_DEPOT_IDS: ${CK3QQBOT_BASE_GAME_DEPOT_IDS-1158311}
+      CK3QQBOT_WORKSHOP_MOD_IDS: ${CK3QQBOT_WORKSHOP_MOD_IDS:-}
+      CK3QQBOT_MIN_FREE_KIB: ${CK3QQBOT_MIN_FREE_KIB:-0}
+      CK3QQBOT_CLEAN_BEFORE_UPDATE: ${CK3QQBOT_CLEAN_BEFORE_UPDATE:-false}
+      CK3QQBOT_PRUNE_DRY_RUN: ${CK3QQBOT_PRUNE_DRY_RUN:-true}
+      CK3QQBOT_MAX_DELETE_RATIO: ${CK3QQBOT_MAX_DELETE_RATIO:-0.95}
+      CK3QQBOT_DELETE_EMPTY_DIRS: ${CK3QQBOT_DELETE_EMPTY_DIRS:-true}
+      CK3QQBOT_STEAMCMD_PROGRESS_INTERVAL_SEC: ${CK3QQBOT_STEAMCMD_PROGRESS_INTERVAL_SEC:-30}
+      CK3QQBOT_STEAMCMD_TASK_POLL_SEC: ${CK3QQBOT_STEAMCMD_TASK_POLL_SEC:-2}
+      CK3QQBOT_STEAM_USER: ${CK3QQBOT_STEAM_USER:-}
+    command: ["/usr/local/bin/ck3qqbot-update-scheduler"]
+    depends_on:
+      - steamcmd-sidecar

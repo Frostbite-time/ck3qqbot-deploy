@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+config_input_dir="${CK3QQBOT_CONFIG_INPUT_DIR:-/config-input}"
+runtime_config_dir="${CK3QQBOT_RUNTIME_CONFIG_DIR:-/runtime/config}"
+bot_dir="${CK3QQBOT_BOT_DIR:-/bot}"
+claude_home="${CK3QQBOT_CLAUDE_HOME:-/runtime/claude-home}"
+
+cc_connect_config_src="${CK3QQBOT_CC_CONNECT_CONFIG_SRC:-${config_input_dir}/cc-connect.toml}"
+cc_connect_config_dst="${CK3QQBOT_CC_CONNECT_CONFIG_DST:-${runtime_config_dir}/cc-connect.toml}"
+claude_settings_src="${CK3QQBOT_CLAUDE_SETTINGS_SRC:-${config_input_dir}/claude-settings.json}"
+claude_settings_dst="${CK3QQBOT_CLAUDE_SETTINGS_DST:-${claude_home}/settings.json}"
+claude_md_src="${CK3QQBOT_CLAUDE_MD_SRC:-${config_input_dir}/CLAUDE.md}"
+claude_md_dst="${CK3QQBOT_CLAUDE_MD_DST:-${bot_dir}/CLAUDE.md}"
+
+project_claude_settings_src="${CK3QQBOT_PROJECT_CLAUDE_SETTINGS_SRC:-}"
+project_claude_settings_dst="${CK3QQBOT_PROJECT_CLAUDE_SETTINGS_DST:-${bot_dir}/.claude/settings.json}"
+project_mcp_src="${CK3QQBOT_CLAUDE_MCP_SRC:-}"
+project_mcp_dst="${CK3QQBOT_CLAUDE_MCP_DST:-${bot_dir}/.mcp.json}"
+
+copy_required() {
+  local src="$1"
+  local dst="$2"
+  local label="$3"
+
+  if [[ ! -f "${src}" ]]; then
+    echo "required ${label} config is missing: ${src}" >&2
+    exit 40
+  fi
+
+  mkdir -p "$(dirname "${dst}")"
+  cp "${src}" "${dst}"
+}
+
+copy_optional() {
+  local src="$1"
+  local dst="$2"
+  local label="$3"
+
+  if [[ ! -f "${src}" ]]; then
+    return 0
+  fi
+
+  mkdir -p "$(dirname "${dst}")"
+  cp "${src}" "${dst}"
+  echo "copied optional ${label}: ${src} -> ${dst}"
+}
+
+copy_optional_render_env() {
+  local src="$1"
+  local dst="$2"
+  local label="$3"
+
+  if [[ ! -f "${src}" ]]; then
+    return 0
+  fi
+
+  mkdir -p "$(dirname "${dst}")"
+  node - "${src}" "${dst}" <<'NODE'
+const fs = require("fs");
+
+const [src, dst] = process.argv.slice(2);
+const input = fs.readFileSync(src, "utf8");
+const output = input.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_match, name) => {
+  return process.env[name] ?? _match;
+});
+fs.writeFileSync(dst, output);
+NODE
+  echo "rendered optional ${label}: ${src} -> ${dst}"
+}
+
+mkdir -p "${runtime_config_dir}" "${bot_dir}" "${claude_home}"
+
+copy_required "${cc_connect_config_src}" "${cc_connect_config_dst}" "cc-connect"
+copy_required "${claude_settings_src}" "${claude_settings_dst}" "Claude settings"
+copy_required "${claude_md_src}" "${claude_md_dst}" "CLAUDE.md"
+
+if [[ -z "${project_claude_settings_src}" ]]; then
+  if [[ -f "${config_input_dir}/project-claude-settings.json" ]]; then
+    project_claude_settings_src="${config_input_dir}/project-claude-settings.json"
+  elif [[ -f "${config_input_dir}/.claude/settings.json" ]]; then
+    project_claude_settings_src="${config_input_dir}/.claude/settings.json"
+  fi
+fi
+
+if [[ -n "${project_claude_settings_src}" ]]; then
+  copy_optional "${project_claude_settings_src}" "${project_claude_settings_dst}" "project Claude settings"
+fi
+
+if [[ -z "${project_mcp_src}" && -f "${config_input_dir}/.mcp.json" ]]; then
+  project_mcp_src="${config_input_dir}/.mcp.json"
+fi
+
+if [[ -n "${project_mcp_src}" ]]; then
+  copy_optional_render_env "${project_mcp_src}" "${project_mcp_dst}" "project MCP"
+fi
+
+echo "runtime config prepared"
+echo "cc-connect config: ${cc_connect_config_dst}"
+echo "claude config dir: ${claude_home}"

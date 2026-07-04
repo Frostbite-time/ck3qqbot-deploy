@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+runtime_user="${CK3QQBOT_RUNTIME_USER:-node}"
+runtime_uid="$(id -u "${runtime_user}")"
+runtime_gid="$(id -g "${runtime_user}")"
+
+ensure_owned_dir() {
+  local path="$1"
+  mkdir -p "${path}"
+  chown -R "${runtime_uid}:${runtime_gid}" "${path}"
+}
+
+if [[ "$(id -u)" -eq 0 ]]; then
+  ensure_owned_dir /runtime
+  ensure_owned_dir /reports
+  ensure_owned_dir /update-state
+  mkdir -p /bot /bot/bot-memory /bot/bot-tmp /bot/steam-downloads /bot/onebot-files
+  chown "${runtime_uid}:${runtime_gid}" /bot
+  chown -R "${runtime_uid}:${runtime_gid}" /bot/bot-memory /bot/bot-tmp /bot/steam-downloads /bot/onebot-files
+  export HOME="/home/${runtime_user}"
+  exec setpriv --reuid "${runtime_uid}" --regid "${runtime_gid}" --clear-groups -- "$@"
+fi
+
+exec "$@"

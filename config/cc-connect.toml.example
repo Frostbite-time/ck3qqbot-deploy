@@ -1,0 +1,53 @@
+data_dir = "/runtime/cc-connect"
+language = "zh"
+idle_timeout_mins = 10
+
+[display]
+thinking_messages = false
+tool_messages = false
+
+[[projects]]
+name = "ck3qqbot"
+reset_on_idle_mins = 20
+inject_sender = true
+show_context_indicator = false
+reply_footer = false
+
+[projects.agent]
+type = "claudecode"
+
+[projects.agent.options]
+# Strict default: unapproved tool permission requests are denied instead of
+# being escalated through QQ chat.
+mode = "dontAsk"
+work_dir = "/bot"
+provider = "provider_proxy"
+model = "${CLAUDE_PROVIDER_MODEL}"
+reasoning_effort = "medium"
+# Tool permissions and sandbox rules are owned by claude-settings.json.
+
+[[projects.agent.providers]]
+name = "provider_proxy"
+agent_types = ["claudecode"]
+# WARNING: keep these values environment-driven in Docker deployments.
+# CLAUDE_PROVIDER_BASE_URL and CLAUDE_PROVIDER_API_KEY are supplied from .env.
+# Do not put real provider addresses or keys in this file; the bot may leak them.
+base_url = "${CLAUDE_PROVIDER_BASE_URL}"
+api_key = "${CLAUDE_PROVIDER_API_KEY}"
+model = "${CLAUDE_PROVIDER_MODEL}"
+
+[[projects.platforms]]
+type = "qq"
+
+[projects.platforms.options]
+# WARNING: keep these two values environment-driven in Docker deployments.
+# ONEBOT_WS_URL and ONEBOT_TOKEN are supplied from .env.
+# Do not put real OneBot addresses or tokens in this file; the bot may leak them.
+ws_url = "${ONEBOT_WS_URL}"
+token = "${ONEBOT_TOKEN}"
+allow_from = "*"
+group_reply_all = false
+share_session_in_channel = true
+group_context_messages = 10
+group_context_max_chars = 2000
+quote_context = true

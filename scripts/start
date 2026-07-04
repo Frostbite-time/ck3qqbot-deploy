@@ -1,0 +1,162 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+script_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+
+doctor_bin="${CK3QQBOT_DOCTOR_BIN:-${script_dir}/doctor}"
+prepare_config_bin="${CK3QQBOT_PREPARE_RUNTIME_CONFIG_BIN:-${script_dir}/prepare-runtime-config}"
+cc_connect_bin="${CK3QQBOT_CC_CONNECT_BIN:-cc-connect}"
+cc_connect_config="${CK3QQBOT_CC_CONNECT_CONFIG_DST:-${CK3QQBOT_RUNTIME_CONFIG_DIR:-/runtime/config}/cc-connect.toml}"
+knowledge_dir="${CK3QQBOT_KNOWLEDGE_DIR:-/knowledge}"
+update_state_dir="${CK3QQBOT_UPDATE_STATE_DIR:-/update-state}"
+watchdog_enabled="${CK3QQBOT_RUNTIME_WATCHDOG_ENABLED:-true}"
+watchdog_interval_sec="${CK3QQBOT_RUNTIME_WATCHDOG_INTERVAL_SEC:-2}"
+shutdown_timeout_sec="${CK3QQBOT_RUNTIME_SHUTDOWN_TIMEOUT_SEC:-30}"
+restart_delay_sec="${CK3QQBOT_RUNTIME_RESTART_DELAY_SEC:-10}"
+updating_marker="${update_state_dir}/.updating"
+confirm_marker="${update_state_dir}/.runtime-confirm"
+
+if [[ ! -x "${doctor_bin}" ]]; then
+  doctor_bin="/usr/local/bin/ck3qqbot-doctor"
+fi
+
+if [[ ! -x "${prepare_config_bin}" ]]; then
+  prepare_config_bin="/usr/local/bin/ck3qqbot-prepare-runtime-config"
+fi
+
+bool_arg() {
+  case "$1" in
+    1 | true | TRUE | True | yes | YES | Yes | on | ON | On) return 0 ;;
+    0 | false | FALSE | False | no | NO | No | off | OFF | Off) return 1 ;;
+    *)
+      echo "invalid boolean value: $1" >&2
+      exit 2
+      ;;
+  esac
+}
+
+write_runtime_confirm() {
+  mkdir -p "${update_state_dir}"
+  {
+    printf 'confirmed_at=%s\n' "$(date -u +%FT%TZ)"
+    printf 'pid=%s\n' "$$"
+  } > "${confirm_marker}"
+}
+
+stop_child() {
+  local pid="$1"
+  local deadline
+
+  if ! kill -0 "${pid}" 2>/dev/null; then
+    return 0
+  fi
+
+  kill -TERM "${pid}" 2>/dev/null || true
+  deadline=$((SECONDS + shutdown_timeout_sec))
+  while kill -0 "${pid}" 2>/dev/null; do
+    if (( SECONDS >= deadline )); then
+      kill -KILL "${pid}" 2>/dev/null || true
+      return 0
+    fi
+    sleep 1
+  done
+}
+
+wait_for_update_to_finish() {
+  write_runtime_confirm
+  while [[ -e "${updating_marker}" ]]; do
+    echo "knowledge update in progress; runtime services are stopped" >&2
+    sleep "${watchdog_interval_sec}"
+  done
+
+  echo "knowledge update marker cleared; restarting runtime services after ${restart_delay_sec}s" >&2
+  sleep "${restart_delay_sec}"
+}
+
+wait_until_ready_or_update() {
+  local status
+
+  while true; do
+    if [[ -e "${updating_marker}" ]]; then
+      wait_for_update_to_finish
+      continue
+    fi
+
+    set +e
+    "${doctor_bin}"
+    status="$?"
+    set -e
+
+    case "${status}" in
+      0)
+        return 0
+        ;;
+      20)
+        if [[ -e "${updating_marker}" ]]; then
+          wait_for_update_to_finish
+          continue
+        fi
+        echo "doctor reported active update but no marker is visible; retrying" >&2
+        ;;
+      21)
+        echo "knowledge is not ready; runtime services are waiting" >&2
+        ;;
+      *)
+        exit "${status}"
+        ;;
+    esac
+
+    sleep "${watchdog_interval_sec}"
+  done
+}
+
+if ! bool_arg "${watchdog_enabled}"; then
+  "${doctor_bin}"
+  "${prepare_config_bin}"
+  exec "${cc_connect_bin}" --config "${cc_connect_config}"
+fi
+
+mkdir -p "${update_state_dir}"
+
+while true; do
+  if [[ -e "${updating_marker}" ]]; then
+    wait_for_update_to_finish
+    continue
+  fi
+
+  wait_until_ready_or_update
+  "${prepare_config_bin}"
+
+  "${cc_connect_bin}" --config "${cc_connect_config}" &
+  child_pid="$!"
+  update_detected=false
+
+  term_handler() {
+    stop_child "${child_pid}"
+  }
+  trap term_handler INT TERM
+
+  while kill -0 "${child_pid}" 2>/dev/null; do
+    if [[ -e "${updating_marker}" ]]; then
+      echo "knowledge update marker detected; stopping runtime services" >&2
+      stop_child "${child_pid}"
+      wait "${child_pid}" 2>/dev/null || true
+      wait_for_update_to_finish
+      update_detected=true
+      break
+    fi
+    sleep "${watchdog_interval_sec}"
+  done
+
+  if [[ "${update_detected}" == "true" ]]; then
+    continue
+  fi
+
+  if [[ ! -e "${updating_marker}" ]]; then
+    set +e
+    wait "${child_pid}"
+    status="$?"
+    set -e
+    exit "${status}"
+  fi
+done

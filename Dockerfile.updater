@@ -1,0 +1,20 @@
+FROM rust:1.95-bookworm AS pruner-build
+
+WORKDIR /src
+COPY Cargo.toml Cargo.toml
+COPY tools/ck3-pruner tools/ck3-pruner
+RUN cargo build --release -p ck3-pruner
+
+FROM debian:bookworm-slim
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates bash curl findutils jq \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=pruner-build /src/target/release/ck3-pruner /usr/local/bin/ck3-pruner
+COPY scripts/update-now /usr/local/bin/ck3qqbot-update-now
+COPY scripts/update-scheduler /usr/local/bin/ck3qqbot-update-scheduler
+RUN chmod +x /usr/local/bin/ck3-pruner /usr/local/bin/ck3qqbot-update-now /usr/local/bin/ck3qqbot-update-scheduler
+
+WORKDIR /knowledge
+CMD ["/usr/local/bin/ck3qqbot-update-now"]

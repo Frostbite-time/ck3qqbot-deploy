@@ -1,0 +1,16 @@
+target/
+tools/steamcmd-sidecar/node_modules/
+tools/steamcmd-sidecar/dist/
+.env
+deploy.yaml
+config/*.local.*
+runtime/
+knowledge/
+bot-memory/
+bot-tmp/
+update-state/
+mcp/
+reports/
+steamcmd/
+steam-downloads/
+*.log

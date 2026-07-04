@@ -1,0 +1,195 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+update_bin="${CK3QQBOT_UPDATE_BIN:-/usr/local/bin/ck3qqbot-update-now}"
+update_state_dir="${CK3QQBOT_UPDATE_STATE_DIR:-/update-state}"
+ready_path="${CK3QQBOT_READY_PATH:-${update_state_dir}/READY}"
+updating_marker="${update_state_dir}/.updating"
+interval_sec="${CK3QQBOT_UPDATE_INTERVAL_SEC:-86400}"
+run_on_start="${CK3QQBOT_UPDATE_RUN_ON_START:-false}"
+schedule_from_ready="${CK3QQBOT_UPDATE_SCHEDULE_FROM_READY:-true}"
+poll_sec="${CK3QQBOT_UPDATE_SCHEDULER_POLL_SEC:-300}"
+failure_backoff_sec="${CK3QQBOT_UPDATE_FAILURE_BACKOFF_SEC:-60}"
+last_attempt_epoch=""
+last_update_failed=false
+scheduler_start_epoch=""
+
+validate_positive_int() {
+  local name="$1"
+  local value="$2"
+
+  case "${value}" in
+    ''|*[!0-9]*)
+      echo "${name} must be a positive integer, got ${value}" >&2
+      exit 2
+      ;;
+  esac
+
+  if (( value <= 0 )); then
+    echo "${name} must be greater than 0" >&2
+    exit 2
+  fi
+}
+
+bool_true() {
+  case "$1" in
+    1 | true | TRUE | True | yes | YES | Yes | on | ON | On) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+now_epoch() {
+  if [[ -n "${CK3QQBOT_SCHEDULER_NOW_EPOCH:-}" ]]; then
+    case "${CK3QQBOT_SCHEDULER_NOW_EPOCH}" in
+      ''|*[!0-9]*)
+        echo "CK3QQBOT_SCHEDULER_NOW_EPOCH must be an integer epoch second, got ${CK3QQBOT_SCHEDULER_NOW_EPOCH}" >&2
+        exit 2
+        ;;
+    esac
+    printf '%s\n' "${CK3QQBOT_SCHEDULER_NOW_EPOCH}"
+  else
+    date -u +%s
+  fi
+}
+
+format_epoch() {
+  date -u -d "@$1" +%FT%TZ
+}
+
+ready_epoch() {
+  local ready_at
+
+  [[ -r "${ready_path}" ]] || return 1
+  ready_at="$(awk -F= '$1 == "ready_at" { print $2; exit }' "${ready_path}")"
+  [[ -n "${ready_at}" ]] || return 1
+  date -u -d "${ready_at}" +%s 2>/dev/null
+}
+
+validate_positive_int "CK3QQBOT_UPDATE_INTERVAL_SEC" "${interval_sec}"
+validate_positive_int "CK3QQBOT_UPDATE_SCHEDULER_POLL_SEC" "${poll_sec}"
+validate_positive_int "CK3QQBOT_UPDATE_FAILURE_BACKOFF_SEC" "${failure_backoff_sec}"
+scheduler_start_epoch="$(now_epoch)"
+
+run_update() {
+  local status
+
+  if [[ -e "${updating_marker}" ]]; then
+    echo "scheduler: skipping update because update marker exists at ${updating_marker}" >&2
+    return 0
+  fi
+
+  last_attempt_epoch="$(now_epoch)"
+  last_update_failed=false
+  echo "scheduler: starting update at $(date -u +%FT%TZ)"
+  if "${update_bin}"; then
+    echo "scheduler: update finished at $(date -u +%FT%TZ)"
+  else
+    status="$?"
+    last_update_failed=true
+    echo "scheduler: update failed with exit code ${status} at $(date -u +%FT%TZ)" >&2
+  fi
+}
+
+seconds_until_next_update() {
+  local baseline_epoch
+  local due_epoch
+  local retry_epoch
+  local now
+
+  now="$(now_epoch)"
+
+  if [[ -e "${updating_marker}" ]]; then
+    echo "scheduler: update marker exists at ${updating_marker}; checking again in ${poll_sec}s" >&2
+    printf '%s\n' "${poll_sec}"
+    return 0
+  fi
+
+  if [[ "${last_update_failed}" == "true" && -n "${last_attempt_epoch}" ]]; then
+    retry_epoch=$((last_attempt_epoch + failure_backoff_sec))
+    if (( retry_epoch > now )); then
+      echo "scheduler: last update failed; retrying at $(format_epoch "${retry_epoch}") after ${failure_backoff_sec}s backoff" >&2
+      printf '%s\n' "$((retry_epoch - now))"
+      return 0
+    fi
+  fi
+
+  if bool_true "${schedule_from_ready}"; then
+    if baseline_epoch="$(ready_epoch)"; then
+      if [[ -n "${last_attempt_epoch}" ]] && (( last_attempt_epoch > baseline_epoch )); then
+        baseline_epoch="${last_attempt_epoch}"
+      fi
+
+      due_epoch=$((baseline_epoch + interval_sec))
+      if (( due_epoch > now )); then
+        echo "scheduler: next update due at $(format_epoch "${due_epoch}") based on ${ready_path}" >&2
+        printf '%s\n' "$((due_epoch - now))"
+        return 0
+      fi
+
+      echo "scheduler: update is due; ${ready_path} timestamp is older than interval" >&2
+      printf '0\n'
+      return 0
+    fi
+
+    if [[ ! -e "${ready_path}" ]]; then
+      if [[ -n "${last_attempt_epoch}" ]]; then
+        retry_epoch=$((last_attempt_epoch + failure_backoff_sec))
+        if (( retry_epoch > now )); then
+          echo "scheduler: READY is still missing after last update attempt; retrying at $(format_epoch "${retry_epoch}") after ${failure_backoff_sec}s backoff" >&2
+          printf '%s\n' "$((retry_epoch - now))"
+          return 0
+        fi
+      fi
+
+      echo "scheduler: READY is missing and no update marker exists; starting initial update" >&2
+      printf '0\n'
+      return 0
+    fi
+
+    echo "scheduler: READY exists but has no parseable ready_at at ${ready_path}; checking again in ${poll_sec}s" >&2
+    printf '%s\n' "${poll_sec}"
+    return 0
+  fi
+
+  baseline_epoch="${scheduler_start_epoch}"
+  if [[ -n "${last_attempt_epoch}" ]]; then
+    baseline_epoch="${last_attempt_epoch}"
+  fi
+
+  due_epoch=$((baseline_epoch + interval_sec))
+  if (( due_epoch > now )); then
+    echo "scheduler: next update due at $(format_epoch "${due_epoch}") based on scheduler runtime" >&2
+    printf '%s\n' "$((due_epoch - now))"
+    return 0
+  fi
+
+  echo "scheduler: update is due based on scheduler runtime interval" >&2
+  printf '0\n'
+}
+
+sleep_until_next_update() {
+  local wait_sec
+  local sleep_sec
+
+  while true; do
+    wait_sec="$(seconds_until_next_update | tail -n 1)"
+    if (( wait_sec <= 0 )); then
+      return 0
+    fi
+
+    sleep_sec="${wait_sec}"
+    if (( sleep_sec > poll_sec )); then
+      sleep_sec="${poll_sec}"
+    fi
+    sleep "${sleep_sec}"
+  done
+}
+
+if bool_true "${run_on_start}"; then
+  run_update
+fi
+
+while true; do
+  sleep_until_next_update
+  run_update
+done

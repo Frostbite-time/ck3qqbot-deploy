@@ -1,0 +1,78 @@
+{
+  "Roots": [
+    {
+      "Kind": "base_game",
+      "Path": "/knowledge/base_game",
+      "Mode": "single"
+    },
+    {
+      "Kind": "workshop_mod",
+      "Path": "/knowledge/workshop_mods",
+      "Mode": "workshop_collection"
+    }
+  ],
+  "ReportDir": "/reports/prune",
+  "DryRun": true,
+  "DeleteEmptyDirectories": true,
+  "MaxDeleteRatio": 0.95,
+  "ProtectedPathRegex": [
+    { "pattern": "^\\.steam(/|$)" },
+    { "pattern": "^steamapps(/|$)" },
+    { "pattern": "^appmanifest_[0-9]+\\.acf$" },
+    { "pattern": "^workshop_manifest.*" },
+    { "pattern": "^\\.updating$" },
+    { "pattern": "^READY$" },
+    { "pattern": "^SUMMARY\\.txt$" },
+    { "pattern": "^MANIFEST\\.txt$" }
+  ],
+  "IncludeDirectoryRegex": [
+    { "pattern": "^common(/|$)" },
+    { "pattern": "^data_binding(/|$)" },
+    { "pattern": "^events(/|$)" },
+    { "pattern": "^gui(/|$)" },
+    { "pattern": "^history(/|$)" },
+    { "pattern": "^map_data/geographical_regions(/|$)" },
+    { "pattern": "^gfx/map/map_object_data(/|$)", "force": true },
+    { "pattern": "^content_source/map_objects/generators(/|$)" },
+    { "pattern": "^notifications(/|$)" }
+  ],
+  "IncludeFileRegex": [
+    { "pattern": "^paths\\.settings$" },
+    { "pattern": "^paths_checksummed\\.settings$" },
+    { "pattern": "^checksum_manifest\\.txt$" },
+    { "pattern": "^compound_settings\\.txt$" },
+    { "pattern": "^settings_layout\\.txt$" },
+    { "pattern": "^manifest\\.json$" },
+    { "pattern": "^mask_painter_meta\\.json$" },
+    { "pattern": "^credit_portraits\\.txt$" },
+    { "pattern": "^credits\\.txt$" },
+    { "pattern": "^[^/]+\\.mod$", "force": true },
+    { "pattern": "^localization/([^/]+/)*(english|simp_chinese)/.*\\.yml$" },
+    { "pattern": "^map_data/(default\\.map|definition\\.csv|positions\\.txt|adjacencies\\.csv|climate\\.txt|seasons\\.txt|island_region\\.txt)$" },
+    { "pattern": "^gfx/models/.*\\.asset$" },
+    { "pattern": "^gfx/portraits/(portraitsettings\\.txt|jomini_environment\\.txt)$" },
+    { "pattern": "^gfx/portraits/(portrait_modifiers|trait_portrait_modifiers|customization_rules|cameras)/.*" },
+    { "pattern": "^gfx/court_scene/.*" },
+    { "pattern": "^gfx/skins/.*" },
+    { "pattern": "^gfx/FX/.*\\.(shader|fxh)$" },
+    { "pattern": "^gfx/map/(map_modes|province_effects)/.*" },
+    { "pattern": "^gfx/map/environment/.*\\.txt$" },
+    { "pattern": "^gfx/map/borders/(settings\\.txt|settings\\.vertical_borders)$" },
+    { "pattern": "^gfx/map/terrain/.*\\.settings$" },
+    { "pattern": "^dlc/.*\\.(dlc|txt|asset)$" },
+    { "pattern": "^music/.*\\.(txt|info)$" },
+    { "pattern": "^sound/map/ambience/.*\\.txt$" },
+    { "pattern": "^sound/GUIDs\\.txt$" }
+  ],
+  "ExcludeDirectoryRegex": [
+    { "pattern": "^sound/banks(/|$)" },
+    { "pattern": "^gfx/interface(/|$)" },
+    { "pattern": "^content_source/map_objects/masks(/|$)" }
+  ],
+  "ExcludeFileRegex": [
+    { "pattern": "\\.(mesh|dds|png|tga|bmp|anim|bank|wem|ogg|wav|bk2|dll|dylib|exe|pdb)$" },
+    { "pattern": "(^|/)thumbnail\\.png$" },
+    { "pattern": "(^|/)desktop\\.ini$" }
+  ]
+}
+

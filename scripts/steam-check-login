@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+steamcmd_bin="${CK3QQBOT_STEAMCMD_BIN:-steamcmd}"
+steamcmd_home="${CK3QQBOT_STEAMCMD_HOME:-/steam}"
+steam_user="${1:-${CK3QQBOT_STEAM_USER:-}}"
+
+if [[ -z "${steam_user}" ]]; then
+  echo "CK3QQBOT_STEAM_USER is required" >&2
+  echo "Login inside the steamcmd-sidecar container first:" >&2
+  echo "  docker compose run --rm steamcmd-sidecar /usr/local/bin/ck3qqbot-steam-login" >&2
+  exit 2
+fi
+
+mkdir -p "${steamcmd_home}"
+log_file="$(mktemp)"
+trap 'rm -f "${log_file}"' EXIT
+
+set +e
+HOME="${steamcmd_home}" "${steamcmd_bin}" \
+  +@ShutdownOnFailedCommand 1 \
+  +@NoPromptForPassword 1 \
+  +login "${steam_user}" \
+  +quit >"${log_file}" 2>&1
+status="$?"
+set -e
+
+if (( status != 0 )); then
+  echo "SteamCMD cached login check failed for ${steam_user}." >&2
+  echo "Refresh the persistent /steam cache inside the steamcmd-sidecar container:" >&2
+  echo "  docker compose run --rm steamcmd-sidecar /usr/local/bin/ck3qqbot-steam-login" >&2
+  exit "${status}"
+fi
+
+if grep -Eiq 'Invalid Password|No cached credentials|password required|Steam Guard|Two-factor|not logged on|Login Failure|FAILED \(No Connection\)|FAILED with result' "${log_file}"; then
+  echo "SteamCMD did not accept the cached login for ${steam_user}." >&2
+  echo "Refresh the persistent /steam cache inside the steamcmd-sidecar container:" >&2
+  echo "  docker compose run --rm steamcmd-sidecar /usr/local/bin/ck3qqbot-steam-login" >&2
+  exit 37
+fi
+
+echo "steam cached login ok for ${steam_user}"

@@ -1,0 +1,20 @@
+{
+  "mcpServers": {
+    "steamcmd": {
+      "type": "http",
+      "url": "http://steamcmd-sidecar:${CK3QQBOT_STEAMCMD_MCP_PORT}/mcp",
+      "headers": {
+        "Authorization": "Bearer ${CK3QQBOT_STEAMCMD_MCP_TOKEN}"
+      },
+      "alwaysLoad": true
+    },
+    "onebot": {
+      "type": "http",
+      "url": "http://onebot-mcp:${CK3QQBOT_ONEBOT_MCP_PORT}/mcp",
+      "headers": {
+        "Authorization": "Bearer ${CK3QQBOT_ONEBOT_MCP_TOKEN}"
+      },
+      "alwaysLoad": true
+    }
+  }
+}

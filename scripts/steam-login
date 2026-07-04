@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+steamcmd_bin="${CK3QQBOT_STEAMCMD_BIN:-steamcmd}"
+steamcmd_home="${CK3QQBOT_STEAMCMD_HOME:-/steam}"
+steam_user="${1:-${CK3QQBOT_STEAM_USER:-}}"
+
+if [[ -z "${steam_user}" ]]; then
+  echo "CK3QQBOT_STEAM_USER is required, or pass a username as the first argument." >&2
+  echo "Docker Compose usage: set CK3QQBOT_STEAM_USER in .env, then run:" >&2
+  echo "  docker compose run --rm steamcmd-sidecar /usr/local/bin/ck3qqbot-steam-login" >&2
+  exit 2
+fi
+
+mkdir -p "${steamcmd_home}"
+
+cat >&2 <<EOF
+Starting SteamCMD login for ${steam_user}.
+
+This script does not accept password or Steam Guard values as arguments or
+environment variables. Enter them only in SteamCMD's interactive prompt.
+
+SteamCMD home: ${steamcmd_home}
+EOF
+
+HOME="${steamcmd_home}" "${steamcmd_bin}" +login "${steam_user}" +quit
+
+echo "steam login cache initialized at ${steamcmd_home}"

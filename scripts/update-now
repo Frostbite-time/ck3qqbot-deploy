@@ -1,0 +1,461 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+knowledge_dir="${CK3QQBOT_KNOWLEDGE_DIR:-/knowledge}"
+update_state_dir="${CK3QQBOT_UPDATE_STATE_DIR:-/update-state}"
+report_dir="${CK3QQBOT_REPORT_DIR:-/reports/update}"
+config_path="${CK3QQBOT_PRUNE_CONFIG:-/config-input/prune-rules.json}"
+pruner_bin="${CK3QQBOT_PRUNER_BIN:-ck3-pruner}"
+runtime_confirm_timeout_sec="${CK3QQBOT_RUNTIME_CONFIRM_TIMEOUT_SEC:-120}"
+runtime_confirm_poll_sec="${CK3QQBOT_RUNTIME_CONFIRM_POLL_SEC:-1}"
+steamcmd_progress_interval_sec="${CK3QQBOT_STEAMCMD_PROGRESS_INTERVAL_SEC:-30}"
+steamcmd_task_poll_sec="${CK3QQBOT_STEAMCMD_TASK_POLL_SEC:-2}"
+updating_marker="${update_state_dir}/.updating"
+update_lock_dir="${update_state_dir}/.update-lock"
+runtime_confirm_marker="${update_state_dir}/.runtime-confirm"
+ready_marker="${CK3QQBOT_READY_PATH:-${update_state_dir}/READY}"
+
+app_id="${CK3QQBOT_STEAM_APP_ID:-1158310}"
+steamcmd_api_url="${CK3QQBOT_STEAMCMD_API_URL:-http://steamcmd-sidecar:${CK3QQBOT_STEAMCMD_MCP_PORT:-18032}}"
+steamcmd_internal_token="${CK3QQBOT_STEAMCMD_INTERNAL_TOKEN:-}"
+base_game_dir="${CK3QQBOT_BASE_GAME_DIR:-${knowledge_dir}/base_game}"
+workshop_dir="${CK3QQBOT_WORKSHOP_DIR:-${knowledge_dir}/workshop_mods}"
+
+base_game_depot_ids="${CK3QQBOT_BASE_GAME_DEPOT_IDS-1158311}"
+workshop_mod_ids="${CK3QQBOT_WORKSHOP_MOD_IDS:-}"
+min_free_kib="${CK3QQBOT_MIN_FREE_KIB:-0}"
+
+clean_before_update="${CK3QQBOT_CLEAN_BEFORE_UPDATE:-false}"
+prune_dry_run="${CK3QQBOT_PRUNE_DRY_RUN:-true}"
+max_delete_ratio="${CK3QQBOT_MAX_DELETE_RATIO:-0.95}"
+delete_empty_dirs="${CK3QQBOT_DELETE_EMPTY_DIRS:-true}"
+have_update_lock=false
+created_update_marker=false
+
+mkdir -p "${knowledge_dir}" "${update_state_dir}" "${report_dir}"
+
+check_free_space() {
+  local path="$1"
+  local free_kib
+
+  if [[ "${min_free_kib}" == "0" ]]; then
+    return 0
+  fi
+
+  free_kib="$(df -Pk "${path}" | awk 'NR == 2 { print $4 }')"
+  if [[ -z "${free_kib}" ]]; then
+    echo "could not determine free disk space for ${path}" >&2
+    exit 31
+  fi
+
+  if (( free_kib < min_free_kib )); then
+    echo "free disk space too low for ${path}: ${free_kib} KiB available, need ${min_free_kib} KiB" >&2
+    exit 32
+  fi
+}
+
+bool_arg() {
+  case "$1" in
+    1 | true | TRUE | True | yes | YES | Yes | on | ON | On) return 0 ;;
+    0 | false | FALSE | False | no | NO | No | off | OFF | Off) return 1 ;;
+    *)
+      echo "invalid boolean value: $1" >&2
+      exit 33
+      ;;
+  esac
+}
+
+append_marker() {
+  printf '%s=%s\n' "$1" "$2" >> "${updating_marker}"
+}
+
+release_update_lock() {
+  if [[ "${have_update_lock}" == "true" ]]; then
+    rmdir "${update_lock_dir}" 2>/dev/null || true
+    have_update_lock=false
+  fi
+}
+
+ensure_no_active_update() {
+  if [[ -e "${updating_marker}" ]]; then
+    echo "refusing to start update because ${updating_marker} already exists" >&2
+    exit 30
+  fi
+}
+
+acquire_update_lock() {
+  ensure_no_active_update
+
+  if ! mkdir "${update_lock_dir}" 2>/dev/null; then
+    echo "refusing to start update because another updater is entering (${update_lock_dir})" >&2
+    exit 30
+  fi
+  have_update_lock=true
+
+  ensure_no_active_update
+}
+
+human_size() {
+  local path="$1"
+  if [[ -e "${path}" ]]; then
+    du -sh "${path}" 2>/dev/null | awk '{ print $1 }'
+  else
+    printf 'missing'
+  fi
+}
+
+free_space() {
+  df -hP "${knowledge_dir}" 2>/dev/null | awk 'NR == 2 { print $4 }'
+}
+
+log_steamcmd_progress() {
+  local label="$1"
+  local elapsed="$2"
+  local task_json="${3:-}"
+  local task_state="unknown"
+  local target_bytes="unknown"
+
+  if [[ -n "${task_json}" ]]; then
+    task_state="$(jq -r '.state // "unknown"' <<< "${task_json}" 2>/dev/null || printf 'unknown')"
+    target_bytes="$(jq -r '.targetBytes // "unknown"' <<< "${task_json}" 2>/dev/null || printf 'unknown')"
+  fi
+
+  printf 'steamcmd %s still running; elapsed=%ss task_state=%s target_bytes=%s knowledge=%s base_game=%s workshop=%s free=%s\n' \
+    "${label}" \
+    "${elapsed}" \
+    "${task_state}" \
+    "${target_bytes}" \
+    "$(human_size "${knowledge_dir}")" \
+    "$(human_size "${base_game_dir}")" \
+    "$(human_size "${workshop_dir}")" \
+    "$(free_space)" >&2
+}
+
+wait_runtime_confirm() {
+  local deadline
+  deadline=$((SECONDS + runtime_confirm_timeout_sec))
+
+  echo "waiting for runtime confirmation: ${runtime_confirm_marker}"
+  while [[ ! -e "${runtime_confirm_marker}" ]]; do
+    if (( SECONDS >= deadline )); then
+      echo "runtime did not confirm shutdown within ${runtime_confirm_timeout_sec}s" >&2
+      return 39
+    fi
+    sleep "${runtime_confirm_poll_sec}"
+  done
+  echo "runtime confirmed services are stopped"
+}
+
+mark_update_failed() {
+  local exit_code="$1"
+  local failed_marker="${update_state_dir}/FAILED"
+
+  if [[ "${created_update_marker}" == "true" && -e "${updating_marker}" ]]; then
+    append_marker failed_at "$(date -u +%FT%TZ)"
+    append_marker exit_code "${exit_code}"
+    cp -f "${updating_marker}" "${failed_marker}"
+    rm -f "${updating_marker}" "${runtime_confirm_marker}"
+  fi
+}
+
+on_exit() {
+  local exit_code="$1"
+
+  if (( exit_code != 0 )); then
+    mark_update_failed "${exit_code}"
+  fi
+  release_update_lock
+}
+
+ensure_steam_user() {
+  if [[ -z "${CK3QQBOT_STEAM_USER:-}" ]]; then
+    echo "CK3QQBOT_STEAM_USER is required; initialize /steam with steam-login first" >&2
+    echo "  docker compose run --rm steamcmd-sidecar /usr/local/bin/ck3qqbot-steam-login" >&2
+    exit 36
+  fi
+}
+
+ensure_sidecar_config() {
+  if [[ -z "${steamcmd_internal_token}" ]]; then
+    echo "CK3QQBOT_STEAMCMD_INTERNAL_TOKEN is required for updater sidecar access" >&2
+    exit 36
+  fi
+}
+
+sidecar_post() {
+  local path="$1"
+  local body="$2"
+
+  curl -fsS \
+    -H "Authorization: Bearer ${steamcmd_internal_token}" \
+    -H "Content-Type: application/json" \
+    -X POST \
+    --data "${body}" \
+    "${steamcmd_api_url}${path}"
+}
+
+sidecar_get() {
+  local path="$1"
+
+  curl -fsS \
+    -H "Authorization: Bearer ${steamcmd_internal_token}" \
+    "${steamcmd_api_url}${path}"
+}
+
+wait_sidecar_task() {
+  local task_id="$1"
+  local label="$2"
+  local elapsed=0
+  local task_json
+  local state
+  local error
+
+  while true; do
+    task_json="$(sidecar_get "/v1/internal/tasks/${task_id}")"
+    state="$(jq -r '.state // empty' <<< "${task_json}")"
+
+    case "${state}" in
+      succeeded)
+        return 0
+        ;;
+      failed | cancelled)
+        error="$(jq -r '.error // "unknown SteamCMD sidecar task failure"' <<< "${task_json}")"
+        echo "steamcmd ${label} failed: ${error}" >&2
+        jq -r '.outputTail[]? // empty' <<< "${task_json}" >&2 || true
+        return 1
+        ;;
+      queued | running)
+        sleep "${steamcmd_task_poll_sec}"
+        elapsed=$((elapsed + steamcmd_task_poll_sec))
+        if (( steamcmd_progress_interval_sec > 0 && elapsed % steamcmd_progress_interval_sec == 0 )); then
+          log_steamcmd_progress "${label}" "${elapsed}" "${task_json}"
+        fi
+        ;;
+      *)
+        echo "unknown steamcmd sidecar task state for ${label}: ${state}" >&2
+        return 1
+        ;;
+    esac
+  done
+}
+
+run_sidecar_task() {
+  local label="$1"
+  local endpoint="$2"
+  local body="$3"
+  local response
+  local task_id
+
+  echo "steamcmd ${label}"
+  check_free_space "${knowledge_dir}"
+
+  response="$(sidecar_post "${endpoint}" "${body}")"
+  task_id="$(jq -r '.id // empty' <<< "${response}")"
+  if [[ -z "${task_id}" ]]; then
+    echo "steamcmd sidecar did not return a task id for ${label}" >&2
+    echo "${response}" >&2
+    return 37
+  fi
+
+  if ! wait_sidecar_task "${task_id}" "${label}"; then
+    return 37
+  fi
+}
+
+check_steam_login() {
+  local response
+  local task_id
+
+  echo "steamcmd check cached login"
+  response="$(sidecar_post "/v1/internal/tasks/check-login" '{}')"
+  task_id="$(jq -r '.id // empty' <<< "${response}")"
+  if [[ -z "${task_id}" ]]; then
+    echo "steamcmd sidecar did not return a task id for login check" >&2
+    echo "${response}" >&2
+    exit 38
+  fi
+
+  if ! wait_sidecar_task "${task_id}" "check cached login"; then
+    echo "SteamCMD did not accept the cached login for ${CK3QQBOT_STEAM_USER}." >&2
+    echo "Refresh the persistent /steam cache inside the steamcmd-sidecar container:" >&2
+    echo "  docker compose run --rm steamcmd-sidecar /usr/local/bin/ck3qqbot-steam-login" >&2
+    exit 38
+  fi
+}
+
+download_base_game_depot() {
+  local depot_spec="$1"
+  local depot_id="${depot_spec%%:*}"
+  local manifest_id=""
+  local body
+
+  if [[ "${depot_spec}" == *:* ]]; then
+    manifest_id="${depot_spec#*:}"
+  fi
+
+  if [[ -z "${depot_id}" ]]; then
+    echo "invalid empty depot id in CK3QQBOT_BASE_GAME_DEPOT_IDS" >&2
+    exit 40
+  fi
+
+  mkdir -p "${base_game_dir}"
+  body="$(jq -cn \
+    --arg appId "${app_id}" \
+    --arg depotId "${depot_id}" \
+    --arg manifestId "${manifest_id}" \
+    --arg targetDir "${base_game_dir}" \
+    '{appId: $appId, depotId: $depotId, targetDir: $targetDir} + (if $manifestId == "" then {} else {manifestId: $manifestId} end)')"
+  run_sidecar_task "download_depot ${app_id} ${depot_id}" "/v1/internal/tasks/download-depot" "${body}"
+
+  if [[ ! -d "${base_game_dir}" ]] || [[ -z "$(find "${base_game_dir}" -mindepth 1 -print -quit)" ]]; then
+    echo "download_depot did not produce files in expected base game directory: ${base_game_dir}" >&2
+    exit 41
+  fi
+}
+
+run_pruner() {
+  local label="$1"
+  local kind="$2"
+  local path="$3"
+  local label_report_dir="${report_dir}/${label}"
+
+  if [[ ! -d "${path}" ]]; then
+    echo "expected prune root does not exist: ${path}" >&2
+    exit 34
+  fi
+
+  mkdir -p "${label_report_dir}"
+  "${pruner_bin}" \
+    -config "${config_path}" \
+    -report-dir "${label_report_dir}" \
+    -root "${kind}:single:${path}" \
+    -dry-run="${prune_dry_run}" \
+    -max-delete-ratio "${max_delete_ratio}" \
+    -delete-empty-dirs="${delete_empty_dirs}"
+}
+
+base_game_prune_root() {
+  if [[ -d "${base_game_dir}/game" ]]; then
+    printf '%s\n' "${base_game_dir}/game"
+  else
+    printf '%s\n' "${base_game_dir}"
+  fi
+}
+
+clean_managed_dir() {
+  local path="$1"
+  local label="$2"
+  local knowledge_real
+  local path_real
+
+  knowledge_real="$(realpath -m "${knowledge_dir}")"
+  path_real="$(realpath -m "${path}")"
+
+  if [[ "${path_real}" == "/" || "${path_real}" == "${knowledge_real}" || "${path_real}" != "${knowledge_real}/"* ]]; then
+    echo "refusing to clean unsafe ${label} path: ${path} (knowledge root: ${knowledge_dir})" >&2
+    exit 43
+  fi
+
+  echo "cleaning ${label} knowledge directory: ${path}"
+  rm -rf -- "${path}"
+  mkdir -p "${path}"
+}
+
+clean_before_download() {
+  if ! bool_arg "${clean_before_update}"; then
+    return 0
+  fi
+
+  if [[ -n "${base_game_depot_ids}" ]]; then
+    clean_managed_dir "${base_game_dir}" "base_game"
+  fi
+
+  clean_managed_dir "${workshop_dir}" "workshop"
+}
+
+write_manifest() {
+  local manifest="${knowledge_dir}/MANIFEST.txt"
+  {
+    printf 'GeneratedAt: %s\n' "$(date -u +%FT%TZ)"
+    printf 'KnowledgeDir: %s\n' "${knowledge_dir}"
+    printf '\n'
+    find "${knowledge_dir}" -type f -printf '%P\t%s\n' | sort
+  } > "${manifest}"
+}
+
+write_summary() {
+  local summary="${knowledge_dir}/SUMMARY.txt"
+  {
+    printf 'UpdatedAt: %s\n' "$(date -u +%FT%TZ)"
+    printf 'AppID: %s\n' "${app_id}"
+    printf 'BaseGameDepots: %s\n' "${base_game_depot_ids}"
+    printf 'WorkshopMods: %s\n' "${workshop_mod_ids}"
+    printf 'CleanBeforeUpdate: %s\n' "${clean_before_update}"
+    printf 'PruneDryRun: %s\n' "${prune_dry_run}"
+    printf 'ReportDir: %s\n' "${report_dir}"
+  } > "${summary}"
+}
+
+ensure_knowledge_runtime_readable() {
+  find "${knowledge_dir}" -type d -exec chmod a+rx {} +
+  find "${knowledge_dir}" -type f -exec chmod a+r {} +
+}
+
+trap 'exit_code=$?; trap - EXIT; on_exit "${exit_code}"; exit "${exit_code}"' EXIT
+
+acquire_update_lock
+check_free_space "${knowledge_dir}"
+mkdir -p "${base_game_dir}" "${workshop_dir}"
+ensure_steam_user
+ensure_sidecar_config
+check_steam_login
+
+rm -f "${runtime_confirm_marker}"
+ensure_no_active_update
+printf 'started_at=%s\n' "$(date -u +%FT%TZ)" > "${updating_marker}"
+created_update_marker=true
+append_marker app_id "${app_id}"
+append_marker report_dir "${report_dir}"
+wait_runtime_confirm
+clean_before_download
+
+if [[ -n "${base_game_depot_ids}" ]]; then
+  normalized_depot_ids="${base_game_depot_ids//,/ }"
+  read -r -a depot_ids <<< "${normalized_depot_ids}"
+  for depot_spec in "${depot_ids[@]}"; do
+    if [[ -z "${depot_spec}" ]]; then
+      continue
+    fi
+    download_base_game_depot "${depot_spec}"
+    run_pruner "base_game" "base_game" "$(base_game_prune_root)"
+  done
+fi
+
+if [[ -n "${workshop_mod_ids}" ]]; then
+  normalized_mod_ids="${workshop_mod_ids//,/ }"
+  read -r -a mod_ids <<< "${normalized_mod_ids}"
+
+  for mod_id in "${mod_ids[@]}"; do
+    if [[ -z "${mod_id}" ]]; then
+      continue
+    fi
+    body="$(jq -cn \
+      --arg appId "${app_id}" \
+      --arg itemId "${mod_id}" \
+      --arg targetDir "${workshop_dir}" \
+      '{appId: $appId, itemId: $itemId, targetDir: $targetDir}')"
+    run_sidecar_task "workshop_download_item ${app_id} ${mod_id}" "/v1/internal/tasks/download-workshop" "${body}"
+    run_pruner "workshop_${mod_id}" "workshop_mod" "${workshop_dir}/${mod_id}"
+  done
+fi
+
+write_manifest
+write_summary
+ensure_knowledge_runtime_readable
+
+rm -f "${update_state_dir}/FAILED"
+rm -f "${knowledge_dir}/READY"
+printf 'ready_at=%s\n' "$(date -u +%FT%TZ)" > "${ready_marker}"
+rm -f "${updating_marker}" "${runtime_confirm_marker}"
+
+echo "update complete"

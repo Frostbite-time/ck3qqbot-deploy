@@ -1,0 +1,44 @@
+FROM node:22-bookworm-slim AS sidecar-build
+
+WORKDIR /src/tools/steamcmd-sidecar
+COPY tools/steamcmd-sidecar/package*.json ./
+RUN npm ci
+COPY tools/steamcmd-sidecar/tsconfig.json ./tsconfig.json
+COPY tools/steamcmd-sidecar/src ./src
+RUN npm run build \
+    && npm prune --omit=dev
+
+FROM node:22-bookworm-slim
+
+ARG STEAMCMD_SHA256=
+
+ENV CK3QQBOT_STEAMCMD_MCP_HOST=0.0.0.0 \
+    CK3QQBOT_STEAMCMD_MCP_PORT=18032 \
+    CK3QQBOT_STEAMCMD_MCP_MAX_DOWNLOAD_KIB=0 \
+    CK3QQBOT_STEAMCMD_MCP_RUNTIME_DOWNLOAD_ROOT=/bot/steam-downloads \
+    CK3QQBOT_STEAMCMD_MCP_PREFLIGHT_TIMEOUT_SEC=60 \
+    CK3QQBOT_STEAMCMD_APP_INFO_OUTPUT_MAX_BYTES=20971520 \
+    CK3QQBOT_STEAM_WORKSHOP_DETAILS_URL=https://api.steampowered.com/ISteamRemoteStorage/GetPublishedFileDetails/v1/ \
+    CK3QQBOT_STEAMCMD_HOME=/steam \
+    CK3QQBOT_STEAMCMD_DOWNLOAD_ROOT=/downloads \
+    CK3QQBOT_KNOWLEDGE_DIR=/knowledge
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates bash curl findutils lib32gcc-s1 tar \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY scripts/install-steamcmd /usr/local/bin/ck3qqbot-install-steamcmd
+RUN chmod +x /usr/local/bin/ck3qqbot-install-steamcmd \
+    && STEAMCMD_SHA256="${STEAMCMD_SHA256}" /usr/local/bin/ck3qqbot-install-steamcmd
+
+COPY scripts/steam-login /usr/local/bin/ck3qqbot-steam-login
+COPY scripts/steam-check-login /usr/local/bin/ck3qqbot-steam-check-login
+COPY scripts/steam-smoke-download /usr/local/bin/ck3qqbot-steam-smoke-download
+RUN chmod +x /usr/local/bin/ck3qqbot-steam-login /usr/local/bin/ck3qqbot-steam-check-login /usr/local/bin/ck3qqbot-steam-smoke-download
+
+WORKDIR /app
+COPY --from=sidecar-build /src/tools/steamcmd-sidecar/package.json ./package.json
+COPY --from=sidecar-build /src/tools/steamcmd-sidecar/node_modules ./node_modules
+COPY --from=sidecar-build /src/tools/steamcmd-sidecar/dist ./dist
+
+CMD ["node", "dist/index.js"]

@@ -1,0 +1,279 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "defaultMode": "dontAsk",
+    "allow": [
+      "Read(//bot/**)",
+      "Read(//knowledge/**)",
+      "Glob(/bot/**)",
+      "Grep(/bot/**)",
+      "LS(/bot/**)",
+      "Write(//bot/bot-memory/**)",
+      "Write(//bot/bot-tmp/**)",
+      "Write(//bot/steam-downloads/**)",
+      "Write(//bot/onebot-files/**)",
+      "Edit(//bot/bot-memory/**)",
+      "Edit(//bot/bot-tmp/**)",
+      "Edit(//bot/steam-downloads/**)",
+      "Edit(//bot/onebot-files/**)",
+      "Bash(*)",
+      "mcp__steamcmd__steamcmd_download_depot",
+      "mcp__steamcmd__steamcmd_download_workshop_item",
+      "mcp__steamcmd__steamcmd_get_task_status",
+      "mcp__steamcmd__steamcmd_cancel_task",
+      "mcp__onebot__get_message",
+      "mcp__onebot__get_group_message_history",
+      "mcp__onebot__get_private_message_history",
+      "mcp__onebot__get_forward_msg",
+      "mcp__onebot__get_group_system_msg",
+      "mcp__onebot__get_image",
+      "mcp__onebot__send_group_message",
+      "mcp__onebot__send_private_message",
+      "mcp__onebot__recall_message",
+      "mcp__onebot__send_group_forward_msg",
+      "mcp__onebot__send_private_forward_msg",
+      "mcp__onebot__forward_friend_single_msg",
+      "mcp__onebot__forward_group_single_msg",
+      "mcp__onebot__set_essence_msg",
+      "mcp__onebot__delete_essence_msg",
+      "mcp__onebot__get_essence_msg_list",
+      "mcp__onebot__send_like",
+      "mcp__onebot__set_group_reaction",
+      "mcp__onebot__send_friend_poke",
+      "mcp__onebot__send_group_poke",
+      "mcp__onebot__send_group_sign",
+      "mcp__onebot__get_group_info",
+      "mcp__onebot__get_group_list",
+      "mcp__onebot__get_group_member_list",
+      "mcp__onebot__get_group_honor_info",
+      "mcp__onebot__get_group_ignore_add_request",
+      "mcp__onebot__get_group_shut_list",
+      "mcp__onebot__get_group_notice",
+      "mcp__onebot__send_group_notice",
+      "mcp__onebot__delete_group_notice",
+      "mcp__onebot__set_group_add_request",
+      "mcp__onebot__set_group_ban",
+      "mcp__onebot__set_group_whole_ban",
+      "mcp__onebot__set_group_card",
+      "mcp__onebot__set_group_remark",
+      "mcp__onebot__set_group_special_title",
+      "mcp__onebot__get_group_root_files",
+      "mcp__onebot__get_group_files_by_folder",
+      "mcp__onebot__get_group_file_url",
+      "mcp__onebot__create_group_file_folder",
+      "mcp__onebot__delete_group_file",
+      "mcp__onebot__delete_group_folder",
+      "mcp__onebot__move_group_file",
+      "mcp__onebot__rename_group_file",
+      "mcp__onebot__rename_group_file_folder",
+      "mcp__onebot__set_group_file_forever",
+      "mcp__onebot__trans_group_file",
+      "mcp__onebot__upload_group_file",
+      "mcp__onebot__upload_group_album",
+      "mcp__onebot__get_friend_list",
+      "mcp__onebot__get_friends_with_category",
+      "mcp__onebot__upload_private_file",
+      "mcp__onebot__get_private_file_url",
+      "mcp__onebot__get_profile_like",
+      "mcp__onebot__get_profile_like_me",
+      "mcp__onebot__get_qq_avatar",
+      "mcp__onebot__set_qq_avatar",
+      "WebFetch",
+      "WebSearch"
+    ],
+    "deny": [
+      "Read(//config-input/**)",
+      "Read(//runtime/**)",
+      "Read(//mcp/**)",
+      "Read(//bot/.mcp.json)",
+      "Read(//bot/.claude/**)",
+      "Read(//**/.env)",
+      "Read(//**/.env.*)",
+      "Write(//knowledge/**)",
+      "Write(//bot/knowledge/**)",
+      "Write(//config-input/**)",
+      "Write(//runtime/**)",
+      "Write(//mcp/**)",
+      "Write(//bot/CLAUDE.md)",
+      "Write(//bot/.mcp.json)",
+      "Write(//bot/.claude/**)",
+      "Edit(//knowledge/**)",
+      "Edit(//bot/knowledge/**)",
+      "Edit(//config-input/**)",
+      "Edit(//runtime/**)",
+      "Edit(//mcp/**)",
+      "Edit(//bot/CLAUDE.md)",
+      "Edit(//bot/.mcp.json)",
+      "Edit(//bot/.claude/**)",
+      "mcp__onebot__set_group_admin",
+      "mcp__onebot__set_group_kick",
+      "mcp__onebot__batch_kick_group_members",
+      "mcp__onebot__set_friend_add_request",
+      "mcp__onebot__delete_friend",
+      "mcp__onebot__set_group_name",
+      "mcp__onebot__set_group_portrait",
+      "mcp__onebot__set_friend_remark",
+      "NotebookEdit",
+      "Agent",
+      "SendMessage",
+      "Workflow",
+      "AskUserQuestion",
+      "EnterPlanMode",
+      "ExitPlanMode",
+      "EnterWorktree",
+      "ExitWorktree",
+      "TaskCreate",
+      "TaskGet",
+      "TaskList",
+      "TaskUpdate",
+      "TaskOutput",
+      "TaskStop",
+      "CronCreate",
+      "CronList",
+      "CronDelete",
+      "ScheduleWakeup",
+      "ReportFindings",
+      "Skill(update-config)",
+      "Skill(update-config *)",
+      "Skill(fewer-permission-prompts)",
+      "Skill(fewer-permission-prompts *)",
+      "Skill(loop)",
+      "Skill(loop *)",
+      "Skill(run)",
+      "Skill(run *)",
+      "Skill(init)",
+      "Skill(init *)",
+      "Skill(security-review)",
+      "Skill(security-review *)",
+      "Skill(keybindings-help)",
+      "Skill(keybindings-help *)"
+    ]
+  },
+  "skillOverrides": {
+    "update-config": "off",
+    "fewer-permission-prompts": "off",
+    "loop": "off",
+    "run": "off",
+    "init": "off",
+    "security-review": "off",
+    "keybindings-help": "off"
+  },
+  "sandbox": {
+    "enabled": true,
+    "failIfUnavailable": true,
+    "autoAllowBashIfSandboxed": false,
+    "allowUnsandboxedCommands": false,
+    "enableWeakerNestedSandbox": true,
+    "network": {
+      "allowedDomains": [
+        "*"
+      ]
+    },
+    "filesystem": {
+      "allowRead": [
+        "/bot",
+        "/knowledge"
+      ],
+      "allowWrite": [
+        "/bot/bot-memory",
+        "/bot/bot-tmp",
+        "/bot/steam-downloads",
+        "/bot/onebot-files",
+        "/tmp",
+        "/var/tmp"
+      ],
+      "denyRead": [
+        "/config-input",
+        "/runtime",
+        "/mcp",
+        "/bot/.mcp.json",
+        "/bot/.claude"
+      ],
+      "denyWrite": [
+        "/",
+        "/knowledge",
+        "/bot/knowledge",
+        "/config-input",
+        "/runtime",
+        "/mcp",
+        "/bot/CLAUDE.md",
+        "/bot/.mcp.json",
+        "/bot/.claude"
+      ]
+    },
+    "credentials": {
+      "files": [
+        {
+          "path": "~/.ssh",
+          "mode": "deny"
+        },
+        {
+          "path": "~/.aws",
+          "mode": "deny"
+        },
+        {
+          "path": "~/.config",
+          "mode": "deny"
+        }
+      ],
+      "envVars": [
+        {
+          "name": "ANTHROPIC_API_KEY",
+          "mode": "deny"
+        },
+        {
+          "name": "ANTHROPIC_AUTH_TOKEN",
+          "mode": "deny"
+        },
+        {
+          "name": "CLAUDE_PROVIDER_API_KEY",
+          "mode": "deny"
+        },
+        {
+          "name": "CLAUDE_PROVIDER_BASE_URL",
+          "mode": "deny"
+        },
+        {
+          "name": "ONEBOT_TOKEN",
+          "mode": "deny"
+        },
+        {
+          "name": "ONEBOT_WS_URL",
+          "mode": "deny"
+        },
+        {
+          "name": "CK3QQBOT_STEAMCMD_MCP_TOKEN",
+          "mode": "deny"
+        },
+        {
+          "name": "CK3QQBOT_STEAMCMD_INTERNAL_TOKEN",
+          "mode": "deny"
+        },
+        {
+          "name": "CK3QQBOT_ONEBOT_MCP_TOKEN",
+          "mode": "deny"
+        },
+        {
+          "name": "GITHUB_TOKEN",
+          "mode": "deny"
+        },
+        {
+          "name": "NPM_TOKEN",
+          "mode": "deny"
+        }
+      ]
+    }
+  },
+  "env": {
+    "DISABLE_AUTOUPDATER": "1",
+    "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB": "1",
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+    "MAX_THINKING_TOKENS": "0"
+  },
+  "disableBypassPermissionsMode": "disable",
+  "disableClaudeAiConnectors": true,
+  "disableArtifact": true,
+  "disableRemoteControl": true,
+  "disableDeepLinkRegistration": "disable",
+  "enableAllProjectMcpServers": true
+}

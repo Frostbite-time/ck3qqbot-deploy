@@ -1,0 +1,126 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+steamcmd_bin="${CK3QQBOT_STEAMCMD_BIN:-steamcmd}"
+steamcmd_home="${CK3QQBOT_STEAMCMD_HOME:-/steam}"
+steam_user="${CK3QQBOT_STEAM_USER:-}"
+
+app_id="${CK3QQBOT_STEAM_SMOKE_APP_ID:-1079000}"
+workshop_item_id="${CK3QQBOT_STEAM_SMOKE_WORKSHOP_ITEM_ID:-2339078416}"
+download_root="${CK3QQBOT_STEAM_SMOKE_DIR:-/reports/steam-smoke/download}"
+report_dir="${CK3QQBOT_STEAM_SMOKE_REPORT_DIR:-/reports/steam-smoke}"
+min_free_kib="${CK3QQBOT_STEAM_SMOKE_MIN_FREE_KIB:-1048576}"
+anonymous="${CK3QQBOT_STEAM_SMOKE_ANONYMOUS:-false}"
+
+bool_arg() {
+  case "$1" in
+    1 | true | TRUE | True | yes | YES | Yes | on | ON | On) return 0 ;;
+    0 | false | FALSE | False | no | NO | No | off | OFF | Off) return 1 ;;
+    *)
+      echo "invalid boolean value: $1" >&2
+      exit 2
+      ;;
+  esac
+}
+
+check_free_space() {
+  local path="$1"
+  local free_kib
+
+  mkdir -p "${path}"
+  free_kib="$(df -Pk "${path}" | awk 'NR == 2 { print $4 }')"
+  if [[ -z "${free_kib}" ]]; then
+    echo "could not determine free disk space for ${path}" >&2
+    exit 3
+  fi
+
+  if (( free_kib < min_free_kib )); then
+    echo "free disk space too low for ${path}: ${free_kib} KiB available, need ${min_free_kib} KiB" >&2
+    exit 4
+  fi
+}
+
+build_login_args() {
+  if bool_arg "${anonymous}"; then
+    login_args=(+login anonymous)
+    return 0
+  fi
+
+  if [[ -z "${steam_user}" ]]; then
+    echo "CK3QQBOT_STEAM_USER is required for the smoke test." >&2
+    echo "Initialize the persistent SteamCMD cache first:" >&2
+    echo "  docker compose run --rm steamcmd-sidecar /usr/local/bin/ck3qqbot-steam-login" >&2
+    exit 5
+  fi
+
+  login_args=(+login "${steam_user}")
+}
+
+write_summary() {
+  local game_size
+  local workshop_size
+  local workshop_dir
+  local summary="${report_dir}/SUMMARY.txt"
+
+  game_size="$(du -sk "${download_root}/game" 2>/dev/null | awk '{ print $1 }')"
+  workshop_dir="$(find_workshop_item_dir || true)"
+  if [[ -n "${workshop_dir}" ]]; then
+    workshop_size="$(du -sk "${workshop_dir}" 2>/dev/null | awk '{ print $1 }')"
+  fi
+
+  {
+    printf 'SteamSmokeDownload\n'
+    printf 'FinishedAt: %s\n' "$(date -u +%FT%TZ)"
+    printf 'AppID: %s\n' "${app_id}"
+    printf 'WorkshopItemID: %s\n' "${workshop_item_id}"
+    printf 'DownloadRoot: %s\n' "${download_root}"
+    printf 'SteamCMDHome: %s\n' "${steamcmd_home}"
+    printf 'LoginMode: %s\n' "$(bool_arg "${anonymous}" && printf anonymous || printf cached-user)"
+    printf 'GameSizeKiB: %s\n' "${game_size:-0}"
+    printf 'WorkshopItemSizeKiB: %s\n' "${workshop_size:-0}"
+  } > "${summary}"
+}
+
+find_workshop_item_dir() {
+  local candidate
+  for candidate in \
+    "${download_root}/game/steamapps/workshop/content/${app_id}/${workshop_item_id}" \
+    "${steamcmd_home}/Steam/steamapps/workshop/content/${app_id}/${workshop_item_id}"; do
+    if [[ -d "${candidate}" ]]; then
+      printf '%s\n' "${candidate}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+mkdir -p "${steamcmd_home}" "${download_root}/game" "${report_dir}"
+check_free_space "${download_root}"
+build_login_args
+
+log_file="${report_dir}/steamcmd.log"
+
+echo "running SteamCMD smoke download: app=${app_id}, workshop_item=${workshop_item_id}"
+HOME="${steamcmd_home}" "${steamcmd_bin}" \
+  +@ShutdownOnFailedCommand 1 \
+  +@NoPromptForPassword 1 \
+  +force_install_dir "${download_root}/game" \
+  "${login_args[@]}" \
+  +app_license_request "${app_id}" \
+  +app_update "${app_id}" \
+  +workshop_download_item "${app_id}" "${workshop_item_id}" \
+  +quit | tee "${log_file}"
+
+if [[ ! -d "${download_root}/game" ]] || [[ -z "$(find "${download_root}/game" -mindepth 1 -print -quit)" ]]; then
+  echo "smoke app download produced no files: ${download_root}/game" >&2
+  exit 6
+fi
+
+workshop_item_dir="$(find_workshop_item_dir || true)"
+if [[ ! -d "${workshop_item_dir}" ]] || [[ -z "$(find "${workshop_item_dir}" -mindepth 1 -print -quit)" ]]; then
+  echo "smoke workshop download produced no files for item ${workshop_item_id}" >&2
+  exit 7
+fi
+
+write_summary
+echo "steam smoke download complete; report: ${report_dir}/SUMMARY.txt"
