@@ -455,6 +455,8 @@ run_sidecar_task_with_attempts() {
   local endpoint="$2"
   local body="$3"
   local attempts="$4"
+  shift 4
+  local -a verify_cmd=("$@")
   local attempt
 
   for ((attempt = 1; attempt <= attempts; attempt++)); do
@@ -467,7 +469,17 @@ run_sidecar_task_with_attempts() {
     fi
 
     if run_sidecar_task "${label}" "${endpoint}" "${body}"; then
-      return 0
+      if ((${#verify_cmd[@]} > 0)); then
+        if "${verify_cmd[@]}"; then
+          return 0
+        fi
+      else
+        return 0
+      fi
+    fi
+
+    if ((${#verify_cmd[@]} > 0)); then
+      record_failure_context "${label}"
     fi
 
     if (( attempt >= attempts )); then
@@ -480,6 +492,17 @@ run_sidecar_task_with_attempts() {
       sleep "${steamcmd_retry_backoff_sec}"
     fi
   done
+}
+
+verify_dir_has_content() {
+  local path="$1"
+  local label="$2"
+
+  if [[ ! -d "${path}" ]] || [[ -z "$(find "${path}" -mindepth 1 -print -quit)" ]]; then
+    echo "steamcmd ${label} did not produce files in expected directory: ${path}" >&2
+    return 1
+  fi
+  return 0
 }
 
 check_steam_login() {
@@ -572,7 +595,12 @@ download_workshop_mod() {
     '{appId: $appId, itemId: $itemId, targetDir: $targetDir}')"
   set_phase "download_workshop_mod"
   set_current_item "workshop_mod" "${mod_id}" "" "${steamcmd_workshop_attempts}"
-  if ! run_sidecar_task_with_attempts "workshop_download_item ${app_id} ${mod_id}" "/v1/internal/tasks/download-workshop" "${body}" "${steamcmd_workshop_attempts}"; then
+  if ! run_sidecar_task_with_attempts \
+    "workshop_download_item ${app_id} ${mod_id}" \
+    "/v1/internal/tasks/download-workshop" \
+    "${body}" \
+    "${steamcmd_workshop_attempts}" \
+    verify_dir_has_content "${workshop_dir}/${mod_id}" "workshop_download_item ${app_id} ${mod_id}"; then
     record_failure_context "workshop_download_item ${app_id} ${mod_id}"
     return 37
   fi

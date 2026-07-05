@@ -62,6 +62,9 @@ cleanup step again, so SteamCMD can reuse partial files and its own cache. If
 all attempts for the current item fail, the current update fails. The next
 update run decides whether to clean only from `CK3QQBOT_CLEAN_BEFORE_UPDATE`;
 it does not use `/update-state/FAILED` to override cleanup behavior.
+For Workshop downloads, a SteamCMD task that exits successfully but does not
+produce the expected item directory is also treated as a failed current item and
+is retried in-place.
 
 When an update fails after `.updating` is written, the updater writes
 `/update-state/FAILED` with metadata including the failed phase and item, the

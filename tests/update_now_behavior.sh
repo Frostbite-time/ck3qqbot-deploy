@@ -158,6 +158,8 @@ case "${method} ${path_part}" in
       write_task "${id}" "failed" "fake workshop failed" "${target_dir}/${item_id}"
     elif [[ -n "${FAKE_SIDECAR_WORKSHOP_FAILS:-}" && "${attempt}" -le "${FAKE_SIDECAR_WORKSHOP_FAILS}" ]]; then
       write_task "${id}" "failed" "fake workshop transient failure" "${target_dir}/${item_id}"
+    elif [[ -n "${FAKE_SIDECAR_WORKSHOP_EMPTY_SUCCESSES:-}" && "${attempt}" -le "${FAKE_SIDECAR_WORKSHOP_EMPTY_SUCCESSES}" ]]; then
+      write_task "${id}" "succeeded" "" "${target_dir}/${item_id}"
     else
       mkdir -p "${target_dir}/${item_id}/common" "${target_dir}/${item_id}/gfx"
       printf 'keep\n' > "${target_dir}/${item_id}/common/mod.txt"
@@ -390,6 +392,26 @@ test_download_retries_failed_item_in_place() {
   assert_contains "${tmp}/knowledge/SUMMARY.txt" "WorkshopAttempts: 5"
 }
 
+test_workshop_empty_success_retries_failed_item_in_place() {
+  local tmp
+  tmp="$(setup_tmp)"
+  confirm_runtime_when_updating "${tmp}"
+
+  run_update "${tmp}" \
+    FAKE_SIDECAR_WORKSHOP_EMPTY_SUCCESSES=2 \
+    CK3QQBOT_BASE_GAME_DEPOT_IDS="" \
+    CK3QQBOT_WORKSHOP_MOD_IDS="3034473189" \
+    CK3QQBOT_STEAMCMD_WORKSHOP_ATTEMPTS=5 \
+    CK3QQBOT_PRUNE_DRY_RUN=true \
+    CK3QQBOT_MIN_FREE_KIB=0
+
+  assert_exists "${tmp}/update-state/READY"
+  assert_line_count "${tmp}/sidecar.log" "POST /v1/internal/tasks/download-workshop" 3
+  assert_exists "${tmp}/knowledge/workshop_mods/3034473189/common/mod.txt"
+  assert_contains "${tmp}/pruner.log" "-root workshop_mod:single:${tmp}/knowledge/workshop_mods/3034473189"
+  assert_contains "${tmp}/knowledge/SUMMARY.txt" "WorkshopAttempts: 5"
+}
+
 test_steam_failure_clears_update_markers_and_records_failed_marker() {
   local tmp
   tmp="$(setup_tmp)"
@@ -534,6 +556,7 @@ test_clean_before_update_removes_old_managed_files
 test_base_game_prunes_game_subdir_when_depot_uses_ck3_layout
 test_empty_base_game_depots_skips_base_game_downloads
 test_download_retries_failed_item_in_place
+test_workshop_empty_success_retries_failed_item_in_place
 test_login_check_failure_does_not_start_update
 test_steam_failure_clears_update_markers_and_records_failed_marker
 test_prune_failure_records_completed_download_and_remaining_item

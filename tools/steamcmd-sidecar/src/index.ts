@@ -160,6 +160,23 @@ function dirSize(root: string): number | undefined {
   }
 }
 
+function dirHasEntries(root: string | undefined): boolean {
+  if (!root) {
+    return false;
+  }
+  try {
+    return fs.statSync(root).isDirectory() && fs.readdirSync(root).length > 0;
+  } catch {
+    return false;
+  }
+}
+
+function validateCompletedTask(task: Task) {
+  if (task.kind === "download-workshop" && !dirHasEntries(task.targetDir)) {
+    throw new Error(`SteamCMD completed but workshop item directory is missing or empty: ${task.targetDir || "unknown"}`);
+  }
+}
+
 function makeMcpDownloadWritable(task: Task) {
   try {
     if (task.role !== "mcp" || !task.targetDir) {
@@ -405,14 +422,20 @@ function drainQueue() {
     task.exitCode = code;
     task.finishedAt = now();
     task.process = undefined;
-    makeMcpDownloadWritable(task);
     if (task.state === "cancelled") {
       activeTask = undefined;
       drainQueue();
       return;
     }
     if (code === 0 && !loginOutputLooksBad(task.outputTail)) {
-      task.state = "succeeded";
+      try {
+        validateCompletedTask(task);
+        task.state = "succeeded";
+        makeMcpDownloadWritable(task);
+      } catch (error) {
+        task.state = "failed";
+        task.error = error instanceof Error ? error.message : String(error);
+      }
     } else {
       task.state = "failed";
       task.error = code === 0 ? "SteamCMD output indicates login failure" : `SteamCMD exited with ${code}`;
