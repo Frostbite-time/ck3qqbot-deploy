@@ -38,6 +38,8 @@ type Task = {
   process?: ChildProcessWithoutNullStreams;
 };
 
+const DEFAULT_STEAMCMD_DOWNLOAD_TIMEOUT_SEC = "240";
+
 const config = {
   host: env("CK3QQBOT_STEAMCMD_MCP_HOST", "0.0.0.0"),
   port: parsePort(env("CK3QQBOT_STEAMCMD_MCP_PORT", env("PORT", "18032"))),
@@ -362,6 +364,10 @@ function commonSteamArgs(): string[] {
     "1",
     "+@NoPromptForPassword",
     "1",
+    "+DepotDownloadProgressTimeout",
+    DEFAULT_STEAMCMD_DOWNLOAD_TIMEOUT_SEC,
+    "+csecManifestDownloadTimeout",
+    DEFAULT_STEAMCMD_DOWNLOAD_TIMEOUT_SEC,
     "+login",
     config.steamUser,
   ];

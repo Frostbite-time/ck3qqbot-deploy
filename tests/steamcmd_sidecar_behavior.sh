@@ -330,6 +330,8 @@ assert_contains "${mcp_rejected_response}" "over configured limit 10 KiB"
 [[ ! -e "${tmp}/downloads/mcp_rejected" ]] || fail "rejected MCP workshop download should not create target directory"
 
 assert_contains "${tmp}/steamcmd.log" "+@NoPromptForPassword 1"
+assert_contains "${tmp}/steamcmd.log" "+DepotDownloadProgressTimeout 240"
+assert_contains "${tmp}/steamcmd.log" "+csecManifestDownloadTimeout 240"
 assert_contains "${tmp}/steamcmd.log" "+login test-user"
 assert_contains "${tmp}/steamcmd.log" "+workshop_download_item 1158310 111"
 assert_contains "${tmp}/steamcmd.log" "+workshop_download_item 1158310 222"
