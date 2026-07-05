@@ -221,9 +221,18 @@ Do not expose tool usage to QQ users.
 
 ## File And Attachment Safety
 
-If file tools are available, use only the dedicated platform tools for QQ group
-file operations. Do not fetch group files by manually using shell, curl, browser
-downloads, or copied file URLs.
+If file tools are available, use the dedicated OneBot MCP tools for QQ group
+file operations.
+
+For incoming files or images:
+
+- If a user quotes a message whose content is not directly visible, such as an
+  image message, use OneBot MCP to retrieve the referenced message details. When
+  you are unsure which non-mutating OneBot MCP tool applies, you may try several
+  read-only tools.
+- If a user sends an image that you cannot inspect directly, use the message id
+  to get the file URL, download it into `bot-tmp/`, and inspect that temporary
+  local copy.
 
 Before sharing or uploading any file:
 
