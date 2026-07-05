@@ -371,6 +371,14 @@ ensure_sidecar_config() {
   fi
 }
 
+ensure_prune_config() {
+  if [[ ! -r "${config_path}" ]]; then
+    echo "prune config is missing or unreadable: ${config_path}" >&2
+    echo "Initialize it on the host path mounted as /config-input, usually: cp config/prune-rules.json.example config/prune-rules.json" >&2
+    exit 35
+  fi
+}
+
 sidecar_post() {
   local path="$1"
   local body="$2"
@@ -754,6 +762,7 @@ check_free_space "${knowledge_dir}"
 mkdir -p "${base_game_dir}" "${workshop_dir}"
 ensure_steam_user
 ensure_sidecar_config
+ensure_prune_config
 check_steam_login
 
 if [[ -n "${base_game_depot_ids}" ]]; then

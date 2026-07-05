@@ -549,6 +549,26 @@ test_login_check_failure_does_not_start_update() {
   assert_contains "${tmp}/sidecar.log" "POST /v1/internal/tasks/check-login"
 }
 
+
+test_missing_prune_config_fails_before_download() {
+  local tmp
+  tmp="$(setup_tmp)"
+  rm -f "${tmp}/config.json"
+
+  if run_update "${tmp}" \
+    CK3QQBOT_WORKSHOP_MOD_IDS="111" \
+    CK3QQBOT_MIN_FREE_KIB=0; then
+    fail "expected updater to fail before downloads when prune config is missing"
+  fi
+
+  assert_missing "${tmp}/update-state/.updating"
+  assert_missing "${tmp}/update-state/READY"
+  assert_missing "${tmp}/knowledge/READY"
+  if [[ -e "${tmp}/sidecar.log" ]]; then
+    fail "expected missing prune config to stop before any sidecar call"
+  fi
+}
+
 test_disk_guard_runs_before_marker() {
   local tmp
   tmp="$(setup_tmp)"
@@ -619,6 +639,7 @@ test_download_retries_clean_failed_item_state
 test_workshop_empty_success_retries_clean_failed_item_state
 test_workshop_state_is_reset_before_batch_and_after_each_prune
 test_login_check_failure_does_not_start_update
+test_missing_prune_config_fails_before_download
 test_steam_failure_clears_update_markers_and_records_failed_marker
 test_prune_failure_records_completed_download_and_remaining_item
 test_disk_guard_runs_before_marker
