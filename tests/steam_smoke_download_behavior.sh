@@ -39,11 +39,11 @@ for ((index = 0; index < ${#args[@]}; index++)); do
       mkdir -p "${install_dir}"
       printf 'game\n' > "${install_dir}/game.txt"
       ;;
-    +workshop_download_item)
+    +download_item)
       app_id="${args[$((index + 1))]}"
       item_id="${args[$((index + 2))]}"
-      mkdir -p "${HOME}/Steam/steamapps/workshop/content/${app_id}/${item_id}"
-      printf 'workshop\n' > "${HOME}/Steam/steamapps/workshop/content/${app_id}/${item_id}/item.txt"
+      mkdir -p "${FAKE_DIRECT_CONTENT_ROOT:?}/app_${app_id}/item_${item_id}"
+      printf 'direct-item\n' > "${FAKE_DIRECT_CONTENT_ROOT}/app_${app_id}/item_${item_id}/item.txt"
       ;;
   esac
 done
@@ -57,17 +57,19 @@ env \
   CK3QQBOT_STEAM_SMOKE_DIR="${tmp}/download" \
   CK3QQBOT_STEAM_SMOKE_REPORT_DIR="${tmp}/reports" \
   CK3QQBOT_STEAM_SMOKE_MIN_FREE_KIB=0 \
+  CK3QQBOT_STEAMCMD_DIRECT_ITEM_CONTENT_ROOT="${tmp}/direct-content" \
+  FAKE_DIRECT_CONTENT_ROOT="${tmp}/direct-content" \
   FAKE_STEAMCMD_LOG="${tmp}/fake-steamcmd.log" \
   "${repo_root}/scripts/steam-smoke-download"
 
 assert_exists "${tmp}/download/game/game.txt"
-assert_exists "${tmp}/steam/Steam/steamapps/workshop/content/1079000/2339078416/item.txt"
+assert_exists "${tmp}/direct-content/app_1079000/item_2339078416/item.txt"
 assert_exists "${tmp}/reports/SUMMARY.txt"
 assert_exists "${tmp}/reports/steamcmd.log"
 assert_contains "${tmp}/fake-steamcmd.log" "+login test-user"
 assert_contains "${tmp}/fake-steamcmd.log" "+app_license_request 1079000"
 assert_contains "${tmp}/fake-steamcmd.log" "+app_update 1079000 validate"
-assert_contains "${tmp}/fake-steamcmd.log" "+workshop_download_item 1079000 2339078416 validate"
+assert_contains "${tmp}/fake-steamcmd.log" "+download_item 1079000 2339078416"
 assert_contains "${tmp}/reports/SUMMARY.txt" "AppID: 1079000"
 assert_contains "${tmp}/reports/SUMMARY.txt" "WorkshopItemID: 2339078416"
 

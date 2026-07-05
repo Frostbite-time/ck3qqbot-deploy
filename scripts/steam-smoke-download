@@ -9,6 +9,7 @@ app_id="${CK3QQBOT_STEAM_SMOKE_APP_ID:-1079000}"
 workshop_item_id="${CK3QQBOT_STEAM_SMOKE_WORKSHOP_ITEM_ID:-2339078416}"
 download_root="${CK3QQBOT_STEAM_SMOKE_DIR:-/reports/steam-smoke/download}"
 report_dir="${CK3QQBOT_STEAM_SMOKE_REPORT_DIR:-/reports/steam-smoke}"
+direct_item_content_root="${CK3QQBOT_STEAMCMD_DIRECT_ITEM_CONTENT_ROOT:-/opt/steamcmd/linux32/steamapps/content}"
 min_free_kib="${CK3QQBOT_STEAM_SMOKE_MIN_FREE_KIB:-1048576}"
 anonymous="${CK3QQBOT_STEAM_SMOKE_ANONYMOUS:-false}"
 
@@ -84,6 +85,8 @@ write_summary() {
 find_workshop_item_dir() {
   local candidate
   for candidate in \
+    "${direct_item_content_root}/app_${app_id}/item_${workshop_item_id}" \
+    "${steamcmd_home}/Steam/steamapps/content/app_${app_id}/item_${workshop_item_id}" \
     "${download_root}/game/steamapps/workshop/content/${app_id}/${workshop_item_id}" \
     "${steamcmd_home}/Steam/steamapps/workshop/content/${app_id}/${workshop_item_id}"; do
     if [[ -d "${candidate}" ]]; then
@@ -108,7 +111,7 @@ HOME="${steamcmd_home}" "${steamcmd_bin}" \
   "${login_args[@]}" \
   +app_license_request "${app_id}" \
   +app_update "${app_id}" validate \
-  +workshop_download_item "${app_id}" "${workshop_item_id}" validate \
+  +download_item "${app_id}" "${workshop_item_id}" \
   +quit | tee "${log_file}"
 
 if [[ ! -d "${download_root}/game" ]] || [[ -z "$(find "${download_root}/game" -mindepth 1 -print -quit)" ]]; then

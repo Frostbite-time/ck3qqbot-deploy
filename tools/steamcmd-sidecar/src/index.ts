@@ -41,7 +41,7 @@ type Task = {
   process?: ChildProcessWithoutNullStreams;
 };
 
-const DEFAULT_STEAMCMD_DOWNLOAD_TIMEOUT_SEC = "240";
+const DEFAULT_STEAMCMD_DOWNLOAD_TIMEOUT_SEC = "1200";
 
 const config = {
   host: env("CK3QQBOT_STEAMCMD_MCP_HOST", "0.0.0.0"),
@@ -59,6 +59,7 @@ const config = {
   preflightTimeoutMs: parseNonNegativeInt(env("CK3QQBOT_STEAMCMD_MCP_PREFLIGHT_TIMEOUT_SEC", "60"), "CK3QQBOT_STEAMCMD_MCP_PREFLIGHT_TIMEOUT_SEC") * 1000,
   appInfoOutputMaxBytes: parseNonNegativeInt(env("CK3QQBOT_STEAMCMD_APP_INFO_OUTPUT_MAX_BYTES", "20971520"), "CK3QQBOT_STEAMCMD_APP_INFO_OUTPUT_MAX_BYTES"),
   workshopDetailsUrl: env("CK3QQBOT_STEAM_WORKSHOP_DETAILS_URL", "https://api.steampowered.com/ISteamRemoteStorage/GetPublishedFileDetails/v1/"),
+  directItemContentRoot: path.resolve(env("CK3QQBOT_STEAMCMD_DIRECT_ITEM_CONTENT_ROOT", "/opt/steamcmd/linux32/steamapps/content")),
 };
 
 const tasks = new Map<string, Task>();
@@ -181,8 +182,11 @@ function validateCompletedTask(task: Task) {
   if (nativeFailure) {
     throw new Error(nativeFailure);
   }
-  if (task.kind === "download-workshop" && !dirHasEntries(task.targetDir)) {
-    throw new Error(`SteamCMD completed but workshop item directory is missing or empty: ${task.targetDir || "unknown"}`);
+  if (task.kind === "download-workshop") {
+    promoteDirectWorkshopItem(task);
+    if (!dirHasEntries(task.targetDir)) {
+      throw new Error(`SteamCMD completed but workshop item directory is missing or empty after direct download promotion: ${task.targetDir || "unknown"}`);
+    }
   }
 }
 
@@ -275,6 +279,58 @@ function findNativeSteamFailureLine(task: Task, lines: string[]): string | undef
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function directWorkshopItemCandidates(appId: string, itemId: string): string[] {
+  const relative = path.join(`app_${appId}`, `item_${itemId}`);
+  return Array.from(new Set([
+    path.join(config.directItemContentRoot, relative),
+    path.join(config.steamHome, "Steam", "steamapps", "content", relative),
+    path.join("/opt/steamcmd/linux32/steamapps/content", relative),
+  ].map(candidate => path.resolve(candidate))));
+}
+
+function promoteDirectWorkshopItem(task: Task) {
+  if (task.kind !== "download-workshop" || !task.appId || !task.itemId || !task.targetDir) {
+    return;
+  }
+
+  const target = assertUnderAny([config.knowledgeRoot, config.downloadRoot], task.targetDir);
+  if (dirHasEntries(target)) {
+    return;
+  }
+
+  const source = directWorkshopItemCandidates(task.appId, task.itemId).find(candidate => dirHasEntries(candidate));
+  if (!source) {
+    return;
+  }
+  const resolvedSource = path.resolve(source);
+  if (resolvedSource === target || resolvedSource.startsWith(`${target}${path.sep}`)) {
+    return;
+  }
+
+  fs.rmSync(target, { recursive: true, force: true });
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  moveDirectory(resolvedSource, target);
+}
+
+function moveDirectory(source: string, target: string) {
+  try {
+    fs.renameSync(source, target);
+    return;
+  } catch (error) {
+    if (!(error instanceof Error && "code" in error && error.code === "EXDEV")) {
+      throw new Error(`failed to move direct download ${source} to ${target}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  try {
+    fs.cpSync(source, target, { recursive: true, force: true, errorOnExist: false });
+    fs.rmSync(source, { recursive: true, force: true });
+  } catch (error) {
+    fs.rmSync(target, { recursive: true, force: true });
+    throw new Error(`failed to move direct download ${source} to ${target} across filesystems: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 function resetWorkshopState(appId: string): string[] {
@@ -393,6 +449,17 @@ function assertUnder(root: string, candidate: string): string {
   return resolved;
 }
 
+function assertUnderAny(roots: string[], candidate: string): string {
+  const resolved = path.resolve(candidate);
+  for (const root of roots) {
+    const resolvedRoot = path.resolve(root);
+    if (resolved === resolvedRoot || resolved.startsWith(`${resolvedRoot}${path.sep}`)) {
+      return resolved;
+    }
+  }
+  throw new Error(`path escapes allowed roots: ${candidate}`);
+}
+
 function mcpDownloadPath(targetSubdir: string | undefined, fallback: string): string {
   const subdir = targetSubdir || fallback;
   if (path.isAbsolute(subdir) || subdir.split(/[\\/]+/).includes("..")) {
@@ -462,6 +529,8 @@ function commonSteamArgs(): string[] {
     "1",
     "+@NoPromptForPassword",
     "1",
+    "+@csecCSRequestProcessorTimeOut",
+    DEFAULT_STEAMCMD_DOWNLOAD_TIMEOUT_SEC,
     "+DepotDownloadProgressTimeout",
     DEFAULT_STEAMCMD_DOWNLOAD_TIMEOUT_SEC,
     "+csecManifestDownloadTimeout",
@@ -530,12 +599,12 @@ function enqueueWorkshopWithPreflight(role: TaskRole, appId: string, itemId: str
   return enqueueTask({
     kind: "download-workshop",
     role,
-    label: `workshop_download_item ${appId} ${itemId}`,
+    label: `download_item ${appId} ${itemId}`,
     appId,
     itemId,
     targetDir: path.join(targetDir, itemId),
     preflight,
-    args: [...commonSteamArgs(), "+workshop_download_item", appId, itemId, "validate", "+quit"],
+    args: [...commonSteamArgs(), "+download_item", appId, itemId, "+quit"],
   });
 }
 
@@ -945,7 +1014,7 @@ function makeMcpServer(): McpServer {
   });
 
   server.registerTool("steamcmd_download_workshop_item", {
-    description: "Queue a SteamCMD workshop_download_item task into the dedicated MCP download directory.",
+    description: "Queue a SteamCMD direct download_item task for a Workshop item into the dedicated MCP download directory.",
     inputSchema: {
       appId: z.string().regex(/^\d+$/),
       itemId: z.string().regex(/^\d+$/),

@@ -121,7 +121,7 @@ runtime watchdog observes .updating and stops cc-connect/Claude Code
 runtime writes /update-state/.runtime-confirm
 updater waits for /update-state/.runtime-confirm
 optional cleanup of managed base_game/workshop directories
-submit steamcmd-sidecar download_depot/workshop_download_item task + prune
+submit steamcmd-sidecar download_depot/direct download_item-backed workshop task + promote + prune
 write /update-state/READY, /knowledge/SUMMARY.txt, and /knowledge/MANIFEST.txt
 remove /update-state/.updating and /update-state/.runtime-confirm
 release /update-state/.update-lock

@@ -672,12 +672,12 @@ download_workshop_mod() {
   set_phase "download_workshop_mod"
   set_current_item "workshop_mod" "${mod_id}" "" "${steamcmd_workshop_attempts}"
   if ! run_sidecar_task_with_attempts \
-    "workshop_download_item ${app_id} ${mod_id}" \
+    "download_item ${app_id} ${mod_id}" \
     "/v1/internal/tasks/download-workshop" \
     "${body}" \
     "${steamcmd_workshop_attempts}" \
-    verify_dir_has_content "${workshop_dir}/${mod_id}" "workshop_download_item ${app_id} ${mod_id}"; then
-    record_failure_context "workshop_download_item ${app_id} ${mod_id}"
+    verify_dir_has_content "${workshop_dir}/${mod_id}" "download_item ${app_id} ${mod_id}"; then
+    record_failure_context "download_item ${app_id} ${mod_id}"
     return 37
   fi
   record_completed_download "workshop_mod" "${mod_id}"

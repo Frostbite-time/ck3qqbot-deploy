@@ -40,12 +40,12 @@ printf 'HOME=%s ARGS=%s\n' "${HOME}" "$*" >> "${FAKE_STEAMCMD_LOG:?}"
 args=("$@")
 for ((index = 0; index < ${#args[@]}; index++)); do
   case "${args[$index]}" in
-    +workshop_download_item)
+    +download_item)
       app_id="${args[$((index + 1))]}"
       item_id="${args[$((index + 2))]}"
-      target="${HOME}/Steam/steamapps/workshop/content/${app_id}/${item_id}"
+      target="${FAKE_DIRECT_CONTENT_ROOT:?}/app_${app_id}/item_${item_id}"
       mkdir -p "${target}" "${HOME}/Steam/logs"
-      printf 'workshop=%s\n' "${item_id}" > "${target}/item.txt"
+      printf 'direct-item=%s\n' "${item_id}" > "${target}/item.txt"
       if [[ "${item_id}" == "444" ]]; then
         ts="$(date -u '+[%Y-%m-%d %H:%M:%S]')"
         printf '%s [AppID %s] Download item %s result : Failure\n' "${ts}" "${app_id}" "${item_id}" >> "${HOME}/Steam/logs/workshop_log.txt"
@@ -143,6 +143,8 @@ api_pid="$!"
     CK3QQBOT_STEAMCMD_DOWNLOAD_ROOT="${tmp}/downloads" \
     CK3QQBOT_KNOWLEDGE_DIR="${tmp}/knowledge" \
     CK3QQBOT_STEAM_WORKSHOP_DETAILS_URL="http://127.0.0.1:${api_port}/details" \
+    CK3QQBOT_STEAMCMD_DIRECT_ITEM_CONTENT_ROOT="${tmp}/direct-content" \
+    FAKE_DIRECT_CONTENT_ROOT="${tmp}/direct-content" \
     FAKE_STEAMCMD_LOG="${tmp}/steamcmd.log" \
     node tools/steamcmd-sidecar/dist/index.js >"${tmp}/sidecar.log" 2>&1
 ) &
@@ -351,14 +353,16 @@ assert_contains "${mcp_rejected_response}" "over configured limit 10 KiB"
 [[ ! -e "${tmp}/downloads/mcp_rejected" ]] || fail "rejected MCP workshop download should not create target directory"
 
 assert_contains "${tmp}/steamcmd.log" "+@NoPromptForPassword 1"
-assert_contains "${tmp}/steamcmd.log" "+DepotDownloadProgressTimeout 240"
-assert_contains "${tmp}/steamcmd.log" "+csecManifestDownloadTimeout 240"
+assert_contains "${tmp}/steamcmd.log" "+@csecCSRequestProcessorTimeOut 1200"
+assert_contains "${tmp}/steamcmd.log" "+DepotDownloadProgressTimeout 1200"
+assert_contains "${tmp}/steamcmd.log" "+csecManifestDownloadTimeout 1200"
 assert_contains "${tmp}/steamcmd.log" "+login test-user"
-assert_contains "${tmp}/steamcmd.log" "+workshop_download_item 1158310 111 validate"
-assert_contains "${tmp}/steamcmd.log" "+workshop_download_item 1158310 222 validate"
+assert_contains "${tmp}/steamcmd.log" "+download_item 1158310 111"
+assert_contains "${tmp}/steamcmd.log" "+download_item 1158310 222"
 assert_contains "${tmp}/steamcmd.log" "+download_depot 1158310 1158311"
 assert_contains "${tmp}/steamcmd.log" "+app_info_print 1158310"
 assert_not_contains "${tmp}/steamcmd.log" "+download_depot 1158310 1158312"
-assert_not_contains "${tmp}/steamcmd.log" "+workshop_download_item 1158310 999"
+assert_not_contains "${tmp}/steamcmd.log" "+workshop_download_item"
+assert_not_contains "${tmp}/steamcmd.log" "+download_item 1158310 999"
 
 echo "steamcmd-sidecar behavior tests passed"
