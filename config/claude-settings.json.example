@@ -5,9 +5,9 @@
     "allow": [
       "Read(//bot/**)",
       "Read(//knowledge/**)",
-      "Glob(/bot/**)",
-      "Grep(/bot/**)",
-      "LS(/bot/**)",
+      "Glob(//bot/**)",
+      "Grep(//bot/**)",
+      "LS(//bot/**)",
       "Write(//bot/bot-memory/**)",
       "Write(//bot/bot-tmp/**)",
       "Write(//bot/steam-downloads/**)",
