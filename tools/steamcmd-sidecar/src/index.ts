@@ -433,7 +433,7 @@ function enqueueWorkshopWithPreflight(role: TaskRole, appId: string, itemId: str
     label: `workshop_download_item ${appId} ${itemId}`,
     targetDir: path.join(targetDir, itemId),
     preflight,
-    args: [...commonSteamArgs(), "+workshop_download_item", appId, itemId, "+quit"],
+    args: [...commonSteamArgs(), "+workshop_download_item", appId, itemId, "validate", "+quit"],
   });
 }
 

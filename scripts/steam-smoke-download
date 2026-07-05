@@ -107,8 +107,8 @@ HOME="${steamcmd_home}" "${steamcmd_bin}" \
   +force_install_dir "${download_root}/game" \
   "${login_args[@]}" \
   +app_license_request "${app_id}" \
-  +app_update "${app_id}" \
-  +workshop_download_item "${app_id}" "${workshop_item_id}" \
+  +app_update "${app_id}" validate \
+  +workshop_download_item "${app_id}" "${workshop_item_id}" validate \
   +quit | tee "${log_file}"
 
 if [[ ! -d "${download_root}/game" ]] || [[ -z "$(find "${download_root}/game" -mindepth 1 -print -quit)" ]]; then
