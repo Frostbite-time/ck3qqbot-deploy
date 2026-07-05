@@ -26,6 +26,9 @@ type Task = {
   role: TaskRole;
   label: string;
   args: string[];
+  appId?: string;
+  itemId?: string;
+  depotId?: string;
   targetDir?: string;
   createdAt: string;
   startedAt?: string;
@@ -174,9 +177,104 @@ function dirHasEntries(root: string | undefined): boolean {
 }
 
 function validateCompletedTask(task: Task) {
+  const nativeFailure = detectNativeSteamFailure(task);
+  if (nativeFailure) {
+    throw new Error(nativeFailure);
+  }
   if (task.kind === "download-workshop" && !dirHasEntries(task.targetDir)) {
     throw new Error(`SteamCMD completed but workshop item directory is missing or empty: ${task.targetDir || "unknown"}`);
   }
+}
+
+function detectNativeSteamFailure(task: Task): string | undefined {
+  const lines = [...task.outputTail, ...readSteamLogLinesSince(task.startedAt)];
+  const matched = findNativeSteamFailureLine(task, lines);
+  return matched ? `SteamCMD native failure detected: ${matched}` : undefined;
+}
+
+function readSteamLogLinesSince(startedAt: string | undefined): string[] {
+  const logDir = path.join(config.steamHome, "Steam", "logs");
+  const names = ["workshop_log.txt", "content_log.txt"];
+  const since = startedAt ? Math.floor(Date.parse(startedAt) / 1000) * 1000 : 0;
+  const output: string[] = [];
+  for (const name of names) {
+    const logPath = path.join(logDir, name);
+    let text: string;
+    try {
+      text = fs.readFileSync(logPath, "utf8");
+    } catch {
+      continue;
+    }
+    for (const line of text.split(/\r?\n/)) {
+      if (!line) {
+        continue;
+      }
+      const timestamp = parseSteamLogTimestamp(line);
+      if (timestamp !== undefined && timestamp < since) {
+        continue;
+      }
+      output.push(line.slice(0, 500));
+    }
+  }
+  return output.slice(-1000);
+}
+
+function parseSteamLogTimestamp(line: string): number | undefined {
+  const match = /^\[(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})\]/.exec(line);
+  if (!match) {
+    return undefined;
+  }
+  const [, year, month, day, hour, minute, second] = match;
+  return Date.UTC(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute), Number(second));
+}
+
+function findNativeSteamFailureLine(task: Task, lines: string[]): string | undefined {
+  const escapedItemId = task.itemId ? escapeRegExp(task.itemId) : undefined;
+  const escapedAppId = task.appId ? escapeRegExp(task.appId) : undefined;
+  const escapedDepotId = task.depotId ? escapeRegExp(task.depotId) : undefined;
+  const patterns: RegExp[] = [];
+
+  if (task.kind === "download-workshop" && escapedItemId) {
+    patterns.push(
+      new RegExp(`Download item ${escapedItemId} result : Failure`, "i"),
+      new RegExp(`ERROR! Timeout downloading item ${escapedItemId}`, "i"),
+      new RegExp(`ERROR! Download item ${escapedItemId} failed`, "i"),
+    );
+  }
+
+  if (task.kind === "download-depot") {
+    patterns.push(
+      /Depot download failed/i,
+      /ERROR! Download failed/i,
+      /ERROR! Failed to install app/i,
+      /ERROR! App .* state is 0x/i,
+    );
+    if (escapedDepotId) {
+      patterns.push(new RegExp(`Depot ${escapedDepotId}.*(failed|Failure|error)`, "i"));
+    }
+  }
+
+  if (task.kind === "download-workshop" && escapedItemId) {
+    patterns.push(
+      new RegExp(`Validation: missing file "${escapedItemId}(?:\\\\|/)`, "i"),
+      new RegExp(`${escapedItemId}.*Missing update files`, "i"),
+      new RegExp(`${escapedItemId}.*Staged file validation failed`, "i"),
+    );
+  }
+
+  for (const line of lines) {
+    if (/Updating workshop item details failed with Failure/i.test(line)) {
+      continue;
+    }
+    if (patterns.some(pattern => pattern.test(line))) {
+      return line;
+    }
+  }
+  return undefined;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function resetWorkshopState(appId: string): string[] {
@@ -406,6 +504,8 @@ function enqueueDepotWithPreflight(role: TaskRole, appId: string, depotId: strin
     kind: "download-depot",
     role,
     label: `download_depot ${appId} ${depotId}`,
+    appId,
+    depotId,
     targetDir,
     preflight,
     args: [
@@ -431,6 +531,8 @@ function enqueueWorkshopWithPreflight(role: TaskRole, appId: string, itemId: str
     kind: "download-workshop",
     role,
     label: `workshop_download_item ${appId} ${itemId}`,
+    appId,
+    itemId,
     targetDir: path.join(targetDir, itemId),
     preflight,
     args: [...commonSteamArgs(), "+workshop_download_item", appId, itemId, "validate", "+quit"],

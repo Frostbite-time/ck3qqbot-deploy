@@ -44,8 +44,13 @@ for ((index = 0; index < ${#args[@]}; index++)); do
       app_id="${args[$((index + 1))]}"
       item_id="${args[$((index + 2))]}"
       target="${HOME}/Steam/steamapps/workshop/content/${app_id}/${item_id}"
-      mkdir -p "${target}"
+      mkdir -p "${target}" "${HOME}/Steam/logs"
       printf 'workshop=%s\n' "${item_id}" > "${target}/item.txt"
+      if [[ "${item_id}" == "444" ]]; then
+        ts="$(date -u '+[%Y-%m-%d %H:%M:%S]')"
+        printf '%s [AppID %s] Download item %s result : Failure\n' "${ts}" "${app_id}" "${item_id}" >> "${HOME}/Steam/logs/workshop_log.txt"
+        printf '%s AppID %s scheduler finished : removed from schedule (result Missing update files, state 0x0) \n' "${ts}" "${app_id}" >> "${HOME}/Steam/logs/content_log.txt"
+      fi
       ;;
     +download_depot)
       depot_root="${args[$((index + 5))]}"
@@ -251,6 +256,22 @@ second_body="$(jq -cn --arg targetDir "${second_target}" '{appId:"1158310", item
 second_id="$(post_task "/v1/internal/tasks/download-workshop" "${second_body}" | jq -r '.id')"
 wait_task "${second_id}"
 assert_exists "${second_target}/222/item.txt"
+
+
+failed_native_target="${tmp}/knowledge/workshop_native_failure"
+failed_native_body="$(jq -cn --arg targetDir "${failed_native_target}" '{appId:"1158310", itemId:"444", targetDir:$targetDir}')"
+failed_native_id="$(post_task "/v1/internal/tasks/download-workshop" "${failed_native_body}" | jq -r '.id')"
+failed_native_json=""
+for _ in {1..50}; do
+  failed_native_json="$(get_task "${failed_native_id}")"
+  if [[ "$(jq -r '.state' <<< "${failed_native_json}")" != "running" && "$(jq -r '.state' <<< "${failed_native_json}")" != "queued" ]]; then
+    break
+  fi
+  sleep 0.1
+done
+[[ "$(jq -r '.state' <<< "${failed_native_json}")" == "failed" ]] || fail "expected native Steam failure to fail sidecar task: ${failed_native_json}"
+assert_contains <(printf '%s' "${failed_native_json}") "SteamCMD native failure detected"
+assert_contains <(printf '%s' "${failed_native_json}") "Download item 444 result : Failure"
 
 depot_target="${tmp}/knowledge/base_game"
 depot_body="$(jq -cn --arg targetDir "${depot_target}" '{appId:"1158310", depotId:"1158311", targetDir:$targetDir}')"

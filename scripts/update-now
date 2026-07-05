@@ -10,8 +10,8 @@ runtime_confirm_timeout_sec="${CK3QQBOT_RUNTIME_CONFIRM_TIMEOUT_SEC:-120}"
 runtime_confirm_poll_sec="${CK3QQBOT_RUNTIME_CONFIRM_POLL_SEC:-1}"
 steamcmd_progress_interval_sec="${CK3QQBOT_STEAMCMD_PROGRESS_INTERVAL_SEC:-30}"
 steamcmd_task_poll_sec="${CK3QQBOT_STEAMCMD_TASK_POLL_SEC:-2}"
-steamcmd_depot_attempts="${CK3QQBOT_STEAMCMD_DEPOT_ATTEMPTS:-5}"
-steamcmd_workshop_attempts="${CK3QQBOT_STEAMCMD_WORKSHOP_ATTEMPTS:-5}"
+steamcmd_depot_attempts="${CK3QQBOT_STEAMCMD_DEPOT_ATTEMPTS:-10}"
+steamcmd_workshop_attempts="${CK3QQBOT_STEAMCMD_WORKSHOP_ATTEMPTS:-10}"
 steamcmd_retry_backoff_sec="${CK3QQBOT_STEAMCMD_RETRY_BACKOFF_SEC:-30}"
 updating_marker="${update_state_dir}/.updating"
 update_lock_dir="${update_state_dir}/.update-lock"
@@ -400,6 +400,66 @@ reset_workshop_state() {
   sidecar_post "/v1/internal/workshop-state/reset" "${body}" >/dev/null
 }
 
+depot_spec_parts() {
+  local depot_spec="$1"
+  local __depot_id_var="$2"
+  local __manifest_id_var="$3"
+  local parsed_depot_id="${depot_spec%%:*}"
+  local parsed_manifest_id=""
+  if [[ "${depot_spec}" == *:* ]]; then
+    parsed_manifest_id="${depot_spec#*:}"
+  fi
+  printf -v "${__depot_id_var}" '%s' "${parsed_depot_id}"
+  printf -v "${__manifest_id_var}" '%s' "${parsed_manifest_id}"
+}
+
+replay_base_game_depots_before_current() {
+  local depot_spec
+  local depot_id
+  local manifest_id
+  local body
+
+  for depot_spec in "${base_game_depot_list[@]}"; do
+    if [[ -z "${depot_spec}" || "${depot_spec}" == "${current_item}" ]]; then
+      break
+    fi
+
+    depot_spec_parts "${depot_spec}" depot_id manifest_id
+    echo "replaying earlier base_game depot before retry: ${app_id} ${depot_id}" >&2
+    body="$(jq -cn \
+      --arg appId "${app_id}" \
+      --arg depotId "${depot_id}" \
+      --arg manifestId "${manifest_id}" \
+      --arg targetDir "${base_game_dir}" \
+      '{appId: $appId, depotId: $depotId, targetDir: $targetDir} + (if $manifestId == "" then {} else {manifestId: $manifestId} end)')"
+    if ! run_sidecar_task "replay download_depot ${app_id} ${depot_id}" "/v1/internal/tasks/download-depot" "${body}"; then
+      echo "failed to replay earlier base_game depot ${depot_spec} before retrying ${current_item}" >&2
+      return 37
+    fi
+  done
+}
+
+cleanup_failed_steamcmd_item() {
+  local label="$1"
+  case "${current_item_kind}" in
+    base_game_depot)
+      echo "cleaning failed depot aggregate target before retry: ${base_game_dir} (${label})" >&2
+      clean_managed_dir "${base_game_dir}" "failed base_game retry target"
+      replay_base_game_depots_before_current
+      ;;
+    workshop_mod)
+      if [[ -n "${current_item}" ]]; then
+        echo "cleaning failed workshop target before retry: ${workshop_dir}/${current_item} (${label})" >&2
+        clean_managed_dir "${workshop_dir}/${current_item}" "failed workshop retry target"
+      fi
+      reset_workshop_state "after failed ${label} attempt ${current_attempt}/${current_max_attempts}"
+      ;;
+    *)
+      echo "no item-specific SteamCMD cleanup configured for failed ${label}" >&2
+      ;;
+  esac
+}
+
 wait_sidecar_task() {
   local task_id="$1"
   local label="$2"
@@ -496,7 +556,8 @@ run_sidecar_task_with_attempts() {
       return 37
     fi
 
-    echo "steamcmd ${label} failed on attempt ${attempt}/${attempts}; retrying in-place without cleaning" >&2
+    echo "steamcmd ${label} failed on attempt ${attempt}/${attempts}; cleaning failed item state before retry" >&2
+    cleanup_failed_steamcmd_item "${label}"
     if (( steamcmd_retry_backoff_sec > 0 )); then
       sleep "${steamcmd_retry_backoff_sec}"
     fi
@@ -537,13 +598,11 @@ check_steam_login() {
 
 download_base_game_depot() {
   local depot_spec="$1"
-  local depot_id="${depot_spec%%:*}"
-  local manifest_id=""
+  local depot_id
+  local manifest_id
   local body
 
-  if [[ "${depot_spec}" == *:* ]]; then
-    manifest_id="${depot_spec#*:}"
-  fi
+  depot_spec_parts "${depot_spec}" depot_id manifest_id
 
   if [[ -z "${depot_id}" ]]; then
     echo "invalid empty depot id in CK3QQBOT_BASE_GAME_DEPOT_IDS" >&2

@@ -149,6 +149,9 @@ case "${method} ${path_part}" in
     if [[ -n "${FAKE_SIDECAR_UPDATE_FAIL:-}" ]]; then
       write_task "${id}" "failed" "fake download failed" "${target_dir}"
     elif [[ -n "${FAKE_SIDECAR_DEPOT_FAILS:-}" && "${attempt}" -le "${FAKE_SIDECAR_DEPOT_FAILS}" ]]; then
+      mkdir -p "${target_dir}/stale"
+      printf 'stale depot attempt %s
+' "${attempt}" > "${target_dir}/stale/failed-attempt.txt"
       write_task "${id}" "failed" "fake depot transient failure" "${target_dir}"
     else
       if [[ -n "${FAKE_SIDECAR_DEPOT_GAME_ROOT:-}" ]]; then
@@ -178,6 +181,9 @@ case "${method} ${path_part}" in
     if [[ -n "${FAKE_SIDECAR_UPDATE_FAIL:-}" ]]; then
       write_task "${id}" "failed" "fake workshop failed" "${target_dir}/${item_id}"
     elif [[ -n "${FAKE_SIDECAR_WORKSHOP_FAILS:-}" && "${attempt}" -le "${FAKE_SIDECAR_WORKSHOP_FAILS}" ]]; then
+      mkdir -p "${target_dir}/${item_id}/stale"
+      printf 'stale workshop attempt %s
+' "${attempt}" > "${target_dir}/${item_id}/stale/failed-attempt.txt"
       write_task "${id}" "failed" "fake workshop transient failure" "${target_dir}/${item_id}"
     elif [[ -n "${FAKE_SIDECAR_WORKSHOP_EMPTY_SUCCESSES:-}" && "${attempt}" -le "${FAKE_SIDECAR_WORKSHOP_EMPTY_SUCCESSES}" ]]; then
       write_task "${id}" "succeeded" "" "${target_dir}/${item_id}"
@@ -393,7 +399,7 @@ test_empty_base_game_depots_skips_base_game_downloads() {
   assert_contains "${tmp}/knowledge/SUMMARY.txt" "BaseGameDepots: "
 }
 
-test_download_retries_failed_item_in_place() {
+test_download_retries_clean_failed_item_state() {
   local tmp
   tmp="$(setup_tmp)"
   confirm_runtime_when_updating "${tmp}"
@@ -413,11 +419,14 @@ test_download_retries_failed_item_in_place() {
   assert_line_count "${tmp}/sidecar.log" "POST /v1/internal/tasks/download-workshop" 3
   assert_exists "${tmp}/knowledge/base_game/common/script_1158311.txt"
   assert_exists "${tmp}/knowledge/workshop_mods/111/common/mod.txt"
+  assert_missing "${tmp}/knowledge/base_game/stale/failed-attempt.txt"
+  assert_missing "${tmp}/knowledge/workshop_mods/111/stale/failed-attempt.txt"
+  assert_line_count "${tmp}/sidecar.log" "POST /v1/internal/workshop-state/reset" 4
   assert_contains "${tmp}/knowledge/SUMMARY.txt" "DepotAttempts: 5"
   assert_contains "${tmp}/knowledge/SUMMARY.txt" "WorkshopAttempts: 5"
 }
 
-test_workshop_empty_success_retries_failed_item_in_place() {
+test_workshop_empty_success_retries_clean_failed_item_state() {
   local tmp
   tmp="$(setup_tmp)"
   confirm_runtime_when_updating "${tmp}"
@@ -432,6 +441,7 @@ test_workshop_empty_success_retries_failed_item_in_place() {
 
   assert_exists "${tmp}/update-state/READY"
   assert_line_count "${tmp}/sidecar.log" "POST /v1/internal/tasks/download-workshop" 3
+  assert_line_count "${tmp}/sidecar.log" "POST /v1/internal/workshop-state/reset" 4
   assert_exists "${tmp}/knowledge/workshop_mods/3034473189/common/mod.txt"
   assert_contains "${tmp}/pruner.log" "-root workshop_mod:single:${tmp}/knowledge/workshop_mods/3034473189"
   assert_contains "${tmp}/knowledge/SUMMARY.txt" "WorkshopAttempts: 5"
@@ -484,12 +494,12 @@ test_steam_failure_clears_update_markers_and_records_failed_marker() {
   assert_contains "${tmp}/update-state/FAILED" "failed_phase=download_base_game_depot"
   assert_contains "${tmp}/update-state/FAILED" "failed_item_kind=base_game_depot"
   assert_contains "${tmp}/update-state/FAILED" "failed_item=1158311"
-  assert_contains "${tmp}/update-state/FAILED" "failed_attempt=5"
-  assert_contains "${tmp}/update-state/FAILED" "failed_max_attempts=5"
+  assert_contains "${tmp}/update-state/FAILED" "failed_attempt=10"
+  assert_contains "${tmp}/update-state/FAILED" "failed_max_attempts=10"
   assert_contains "${tmp}/update-state/FAILED" "planned_base_game_depots=1158311"
   assert_contains "${tmp}/update-state/FAILED" "completed_base_game_downloads="
   assert_contains "${tmp}/update-state/FAILED" "remaining_base_game_depots=1158311"
-  assert_line_count "${tmp}/sidecar.log" "POST /v1/internal/tasks/download-depot" 5
+  assert_line_count "${tmp}/sidecar.log" "POST /v1/internal/tasks/download-depot" 10
 }
 
 test_prune_failure_records_completed_download_and_remaining_item() {
@@ -605,8 +615,8 @@ test_success_flow
 test_clean_before_update_removes_old_managed_files
 test_base_game_prunes_game_subdir_when_depot_uses_ck3_layout
 test_empty_base_game_depots_skips_base_game_downloads
-test_download_retries_failed_item_in_place
-test_workshop_empty_success_retries_failed_item_in_place
+test_download_retries_clean_failed_item_state
+test_workshop_empty_success_retries_clean_failed_item_state
 test_workshop_state_is_reset_before_batch_and_after_each_prune
 test_login_check_failure_does_not_start_update
 test_steam_failure_clears_update_markers_and_records_failed_marker
