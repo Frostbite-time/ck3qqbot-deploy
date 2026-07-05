@@ -18,6 +18,10 @@ assert_contains() {
   grep -Fq -- "$pattern" "$file" || fail "expected ${file} to contain ${pattern}"
 }
 
+assert_missing() {
+  [[ ! -e "$1" ]] || fail "expected path to be missing: $1"
+}
+
 assert_not_contains() {
   local file="$1"
   local pattern="$2"
@@ -207,6 +211,25 @@ mcp_response_json() {
 
 login_id="$(post_task "/v1/internal/tasks/check-login" '{}' | jq -r '.id')"
 wait_task "${login_id}"
+
+mkdir -p \
+  "${tmp}/steam/Steam/steamapps/workshop/downloads/1158310/111" \
+  "${tmp}/steam/Steam/steamapps/workshop/temp/1158310" \
+  "${tmp}/steam/Steam/steamapps/workshop/content" \
+  "${tmp}/knowledge/workshop_content"
+ln -s "${tmp}/knowledge/workshop_content" "${tmp}/steam/Steam/steamapps/workshop/content/1158310"
+printf 'state\n' > "${tmp}/steam/Steam/steamapps/workshop/appworkshop_1158310.acf"
+printf 'patch\n' > "${tmp}/steam/Steam/steamapps/workshop/downloads/state_1158310_1158310_111.patch"
+printf 'other app state\n' > "${tmp}/steam/Steam/steamapps/workshop/appworkshop_1079000.acf"
+reset_body='{"appId":"1158310"}'
+reset_response="$(post_task "/v1/internal/workshop-state/reset" "${reset_body}")"
+[[ "$(jq -r '.ok' <<< "${reset_response}")" == "true" ]] || fail "expected workshop reset ok response"
+assert_missing "${tmp}/steam/Steam/steamapps/workshop/appworkshop_1158310.acf"
+assert_missing "${tmp}/steam/Steam/steamapps/workshop/downloads/1158310"
+assert_missing "${tmp}/steam/Steam/steamapps/workshop/temp/1158310"
+assert_missing "${tmp}/steam/Steam/steamapps/workshop/downloads/state_1158310_1158310_111.patch"
+assert_exists "${tmp}/steam/Steam/steamapps/workshop/content/1158310"
+assert_exists "${tmp}/steam/Steam/steamapps/workshop/appworkshop_1079000.acf"
 
 first_target="${tmp}/knowledge/workshop_a"
 first_body="$(jq -cn --arg targetDir "${first_target}" '{appId:"1158310", itemId:"111", targetDir:$targetDir}')"

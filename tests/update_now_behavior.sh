@@ -32,6 +32,21 @@ assert_line_count() {
   [[ "${actual}" == "${expected}" ]] || fail "expected ${file} to contain ${pattern} ${expected} times, got ${actual}"
 }
 
+assert_order() {
+  local first_file="$1"
+  local first_pattern="$2"
+  local second_file="$3"
+  local second_pattern="$4"
+  local first_line
+  local second_line
+
+  first_line="$(grep -Fn -- "$first_pattern" "$first_file" | head -1 | cut -d: -f1 || true)"
+  second_line="$(grep -Fn -- "$second_pattern" "$second_file" | head -1 | cut -d: -f1 || true)"
+  [[ -n "${first_line}" ]] || fail "expected ${first_file} to contain ${first_pattern}"
+  [[ -n "${second_line}" ]] || fail "expected ${second_file} to contain ${second_pattern}"
+  (( first_line < second_line )) || fail "expected ${first_pattern} in ${first_file} before ${second_pattern} in ${second_file}"
+}
+
 make_fake_tools() {
   local bin_dir="$1"
   mkdir -p "${bin_dir}"
@@ -72,6 +87,9 @@ state_dir="${FAKE_SIDECAR_STATE_DIR:?}"
 log_file="${FAKE_SIDECAR_LOG:?}"
 mkdir -p "${state_dir}"
 printf '%s %s\n' "${method}" "${path_part}" >> "${log_file}"
+if [[ -n "${FAKE_EVENT_LOG:-}" ]]; then
+  printf 'SIDECAR %s %s\n' "${method}" "${path_part}" >> "${FAKE_EVENT_LOG}"
+fi
 if [[ -n "${data}" ]]; then
   printf 'DATA %s\n' "${data}" >> "${log_file}"
 fi
@@ -143,6 +161,9 @@ case "${method} ${path_part}" in
     fi
     jq -cn --arg id "${id}" '{id: $id, state: "queued"}'
     ;;
+  "POST /v1/internal/workshop-state/reset")
+    jq -cn '{ok: true}'
+    ;;
   "POST /v1/internal/tasks/download-workshop")
     id="$(next_task_id)"
     target_dir="$(jq -r '.targetDir' <<< "${data}")"
@@ -184,6 +205,9 @@ cat > "${bin_dir}/fake-pruner" <<'EOF'
 set -euo pipefail
 
 printf '%s\n' "$*" >> "${FAKE_PRUNER_LOG:?}"
+if [[ -n "${FAKE_EVENT_LOG:-}" ]]; then
+  printf 'PRUNER %s\n' "$*" >> "${FAKE_EVENT_LOG}"
+fi
 
 if [[ -n "${FAKE_PRUNER_FAIL_PATTERN:-}" && "$*" == *"${FAKE_PRUNER_FAIL_PATTERN}"* ]]; then
   echo "fake pruner failure for ${FAKE_PRUNER_FAIL_PATTERN}" >&2
@@ -230,6 +254,7 @@ run_update() {
     FAKE_SIDECAR_STATE_DIR="${tmp}/sidecar-state" \
     FAKE_SIDECAR_LOG="${tmp}/sidecar.log" \
     FAKE_PRUNER_LOG="${tmp}/pruner.log" \
+    FAKE_EVENT_LOG="${tmp}/events.log" \
     "$@" \
     "${repo_root}/scripts/update-now"
 }
@@ -412,6 +437,31 @@ test_workshop_empty_success_retries_failed_item_in_place() {
   assert_contains "${tmp}/knowledge/SUMMARY.txt" "WorkshopAttempts: 5"
 }
 
+test_workshop_state_is_reset_before_batch_and_after_each_prune() {
+  local tmp
+  tmp="$(setup_tmp)"
+  confirm_runtime_when_updating "${tmp}"
+
+  run_update "${tmp}" \
+    CK3QQBOT_BASE_GAME_DEPOT_IDS="" \
+    CK3QQBOT_WORKSHOP_MOD_IDS="111,222" \
+    CK3QQBOT_PRUNE_DRY_RUN=false \
+    CK3QQBOT_MIN_FREE_KIB=0
+
+  assert_exists "${tmp}/update-state/READY"
+  assert_line_count "${tmp}/sidecar.log" "POST /v1/internal/workshop-state/reset" 3
+  assert_order \
+    "${tmp}/events.log" "SIDECAR POST /v1/internal/workshop-state/reset" \
+    "${tmp}/events.log" "SIDECAR POST /v1/internal/tasks/download-workshop"
+
+  first_prune_line="$(grep -Fn -- "PRUNER -config ${tmp}/config.json -report-dir ${tmp}/reports/workshop_111" "${tmp}/events.log" | head -1 | cut -d: -f1)"
+  second_download_line="$(grep -Fn -- "SIDECAR POST /v1/internal/tasks/download-workshop" "${tmp}/events.log" | tail -1 | cut -d: -f1)"
+  reset_after_first_prune_line="$(awk -v start="${first_prune_line}" 'NR > start && /SIDECAR POST \/v1\/internal\/workshop-state\/reset/ { print NR; exit }' "${tmp}/events.log")"
+  [[ -n "${reset_after_first_prune_line}" ]] || fail "expected workshop state reset after first workshop prune"
+  (( first_prune_line < reset_after_first_prune_line && reset_after_first_prune_line < second_download_line )) || \
+    fail "expected first workshop to be pruned and reset before second workshop download"
+}
+
 test_steam_failure_clears_update_markers_and_records_failed_marker() {
   local tmp
   tmp="$(setup_tmp)"
@@ -557,6 +607,7 @@ test_base_game_prunes_game_subdir_when_depot_uses_ck3_layout
 test_empty_base_game_depots_skips_base_game_downloads
 test_download_retries_failed_item_in_place
 test_workshop_empty_success_retries_failed_item_in_place
+test_workshop_state_is_reset_before_batch_and_after_each_prune
 test_login_check_failure_does_not_start_update
 test_steam_failure_clears_update_markers_and_records_failed_marker
 test_prune_failure_records_completed_download_and_remaining_item

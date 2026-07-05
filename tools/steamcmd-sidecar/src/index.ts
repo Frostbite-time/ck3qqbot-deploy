@@ -177,6 +177,40 @@ function validateCompletedTask(task: Task) {
   }
 }
 
+function resetWorkshopState(appId: string): string[] {
+  const workshopRoot = path.join(config.steamHome, "Steam", "steamapps", "workshop");
+  const downloadsRoot = path.join(workshopRoot, "downloads");
+  const candidates = [
+    path.join(workshopRoot, `appworkshop_${appId}.acf`),
+    path.join(downloadsRoot, appId),
+    path.join(workshopRoot, "temp", appId),
+  ];
+
+  try {
+    for (const entry of fs.readdirSync(downloadsRoot)) {
+      if (entry.startsWith(`state_${appId}_${appId}_`) && entry.endsWith(".patch")) {
+        candidates.push(path.join(downloadsRoot, entry));
+      }
+    }
+  } catch (error) {
+    if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
+      throw error;
+    }
+  }
+
+  const removed: string[] = [];
+  for (const candidate of candidates) {
+    if (!candidate.startsWith(`${workshopRoot}${path.sep}`)) {
+      throw new Error(`refusing to reset path outside Steam workshop root: ${candidate}`);
+    }
+    if (fs.existsSync(candidate)) {
+      fs.rmSync(candidate, { recursive: true, force: true });
+      removed.push(candidate);
+    }
+  }
+  return removed;
+}
+
 function makeMcpDownloadWritable(task: Task) {
   try {
     if (task.role !== "mcp" || !task.targetDir) {
@@ -882,6 +916,17 @@ function main() {
       targetDir,
     );
     res.status(202).json(publicTask(task, true));
+  }));
+
+  app.post("/v1/internal/workshop-state/reset", asyncHandler(async (req, res) => {
+    if (!isAuthorized(req.headers.authorization, config.internalToken)) {
+      res.status(401).json({ error: "unauthorized" });
+      return;
+    }
+    const body = req.body || {};
+    const appId = steamId("appId", String(body.appId));
+    const removed = resetWorkshopState(appId);
+    res.json({ ok: true, appId, removed });
   }));
 
   app.post("/v1/internal/tasks/download-workshop", asyncHandler(async (req, res) => {

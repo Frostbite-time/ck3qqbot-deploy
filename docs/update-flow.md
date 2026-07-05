@@ -24,8 +24,10 @@ Pruning is in-place to avoid doubling peak disk usage. The pruning tool therefor
 
 The updater checks free space before submitting SteamCMD sidecar tasks when
 `CK3QQBOT_MIN_FREE_KIB` is non-zero. It prunes after each configured base-game
-depot and after each Workshop item, instead of waiting for the whole update
-batch to complete.
+depot and after each Workshop item. Because pruning mutates the same Workshop
+content tree SteamCMD uses as installed-state storage, the updater asks the
+sidecar to reset the app's SteamCMD Workshop state before the Workshop batch and
+after each Workshop item is pruned before continuing to the next item.
 
 If `CK3QQBOT_CLEAN_BEFORE_UPDATE=true`, the updater removes managed knowledge
 directories after runtime confirms shutdown and before SteamCMD sidecar downloads new

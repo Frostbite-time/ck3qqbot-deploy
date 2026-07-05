@@ -391,6 +391,15 @@ sidecar_get() {
     "${steamcmd_api_url}${path}"
 }
 
+reset_workshop_state() {
+  local reason="$1"
+  local body
+
+  body="$(jq -cn --arg appId "${app_id}" '{appId: $appId}')"
+  echo "resetting SteamCMD workshop state for app ${app_id}: ${reason}"
+  sidecar_post "/v1/internal/workshop-state/reset" "${body}" >/dev/null
+}
+
 wait_sidecar_task() {
   local task_id="$1"
   local label="$2"
@@ -731,6 +740,7 @@ if [[ "${#base_game_depot_list[@]}" -gt 0 ]]; then
 fi
 
 if [[ "${#workshop_mod_list[@]}" -gt 0 ]]; then
+  reset_workshop_state "before workshop batch"
   for mod_id in "${workshop_mod_list[@]}"; do
     if [[ -z "${mod_id}" ]]; then
       continue
@@ -741,6 +751,7 @@ if [[ "${#workshop_mod_list[@]}" -gt 0 ]]; then
     record_failure_context "prune workshop ${mod_id}"
     run_pruner "workshop_${mod_id}" "workshop_mod" "${workshop_dir}/${mod_id}"
     record_completed_prune "workshop_mod" "${mod_id}"
+    reset_workshop_state "after workshop ${mod_id} prune"
     clear_failure_context
     clear_current_item
   done
