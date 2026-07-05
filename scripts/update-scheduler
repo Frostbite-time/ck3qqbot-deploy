@@ -11,6 +11,7 @@ schedule_from_ready="${CK3QQBOT_UPDATE_SCHEDULE_FROM_READY:-true}"
 poll_sec="${CK3QQBOT_UPDATE_SCHEDULER_POLL_SEC:-300}"
 failure_backoff_sec="${CK3QQBOT_UPDATE_FAILURE_BACKOFF_SEC:-60}"
 last_attempt_epoch=""
+last_failure_epoch=""
 last_update_failed=false
 scheduler_start_epoch=""
 
@@ -85,6 +86,7 @@ run_update() {
     echo "scheduler: update finished at $(date -u +%FT%TZ)"
   else
     status="$?"
+    last_failure_epoch="$(now_epoch)"
     last_update_failed=true
     echo "scheduler: update failed with exit code ${status} at $(date -u +%FT%TZ)" >&2
   fi
@@ -104,8 +106,8 @@ seconds_until_next_update() {
     return 0
   fi
 
-  if [[ "${last_update_failed}" == "true" && -n "${last_attempt_epoch}" ]]; then
-    retry_epoch=$((last_attempt_epoch + failure_backoff_sec))
+  if [[ "${last_update_failed}" == "true" && -n "${last_failure_epoch}" ]]; then
+    retry_epoch=$((last_failure_epoch + failure_backoff_sec))
     if (( retry_epoch > now )); then
       echo "scheduler: last update failed; retrying at $(format_epoch "${retry_epoch}") after ${failure_backoff_sec}s backoff" >&2
       printf '%s\n' "$((retry_epoch - now))"
@@ -132,8 +134,8 @@ seconds_until_next_update() {
     fi
 
     if [[ ! -e "${ready_path}" ]]; then
-      if [[ -n "${last_attempt_epoch}" ]]; then
-        retry_epoch=$((last_attempt_epoch + failure_backoff_sec))
+      if [[ -n "${last_failure_epoch}" ]]; then
+        retry_epoch=$((last_failure_epoch + failure_backoff_sec))
         if (( retry_epoch > now )); then
           echo "scheduler: READY is still missing after last update attempt; retrying at $(format_epoch "${retry_epoch}") after ${failure_backoff_sec}s backoff" >&2
           printf '%s\n' "$((retry_epoch - now))"

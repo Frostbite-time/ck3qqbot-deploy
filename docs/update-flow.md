@@ -12,6 +12,7 @@ State files:
 - `/update-state/.updating`: update is in progress or failed before cleanup.
 - `/update-state/.runtime-confirm`: runtime has stopped internal services for the current update.
 - `/update-state/READY`: last successful update completed.
+- `/update-state/FAILED`: metadata copied from the failed update marker when an update fails after `.updating` is written.
 - `/knowledge/SUMMARY.txt`: human-readable update summary.
 - `/knowledge/MANIFEST.txt`: generated inventory for the current knowledge tree.
 
@@ -45,6 +46,27 @@ SteamCMD can be quiet during `download_depot`. The updater polls sidecar task
 state and logs a progress snapshot every
 `CK3QQBOT_STEAMCMD_PROGRESS_INTERVAL_SEC` seconds, including elapsed time, task
 state, target bytes, directory sizes, and free disk space.
+
+Each configured base-game depot and each configured Workshop item is retried
+in-place before the whole update fails. The defaults are:
+
+```text
+CK3QQBOT_STEAMCMD_DEPOT_ATTEMPTS=5
+CK3QQBOT_STEAMCMD_WORKSHOP_ATTEMPTS=5
+CK3QQBOT_STEAMCMD_RETRY_BACKOFF_SEC=30
+```
+
+In-place retries only repeat the failed depot or Workshop item. They do not
+repeat successful items and they do not run the `CK3QQBOT_CLEAN_BEFORE_UPDATE`
+cleanup step again, so SteamCMD can reuse partial files and its own cache. If
+all attempts for the current item fail, the current update fails. The next
+update run decides whether to clean only from `CK3QQBOT_CLEAN_BEFORE_UPDATE`;
+it does not use `/update-state/FAILED` to override cleanup behavior.
+
+When an update fails after `.updating` is written, the updater writes
+`/update-state/FAILED` with metadata including the failed phase and item, the
+current attempt number, planned depots and Workshop items, completed downloads,
+completed prune passes, and the remaining unpruned items.
 
 SteamCMD login is cache-oriented:
 
@@ -141,5 +163,5 @@ missing READY plus `.updating` waits one poll interval; READY due plus
 `.updating` also waits one poll interval; an existing but unparseable READY also
 waits instead of guessing. If an update attempt fails, or an attempt returns
 without producing READY, the scheduler waits `CK3QQBOT_UPDATE_FAILURE_BACKOFF_SEC`
-from that attempt before retrying. This keeps retries bounded and guarantees
-each failed attempt has a minimum cool-down.
+from the observed failure time before retrying. This keeps retries bounded and
+guarantees each failed attempt has a minimum cool-down after it actually ends.

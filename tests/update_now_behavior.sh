@@ -22,6 +22,16 @@ assert_contains() {
   grep -Fq -- "$pattern" "$file" || fail "expected ${file} to contain ${pattern}"
 }
 
+assert_line_count() {
+  local file="$1"
+  local pattern="$2"
+  local expected="$3"
+  local actual
+
+  actual="$(grep -Fc -- "$pattern" "$file" || true)"
+  [[ "${actual}" == "${expected}" ]] || fail "expected ${file} to contain ${pattern} ${expected} times, got ${actual}"
+}
+
 make_fake_tools() {
   local bin_dir="$1"
   mkdir -p "${bin_dir}"
@@ -111,8 +121,17 @@ case "${method} ${path_part}" in
     id="$(next_task_id)"
     target_dir="$(jq -r '.targetDir' <<< "${data}")"
     depot_id="$(jq -r '.depotId' <<< "${data}")"
+    count_file="${state_dir}/depot_${depot_id}_attempts"
+    attempt=1
+    if [[ -f "${count_file}" ]]; then
+      attempt="$(<"${count_file}")"
+      attempt=$((attempt + 1))
+    fi
+    printf '%s\n' "${attempt}" > "${count_file}"
     if [[ -n "${FAKE_SIDECAR_UPDATE_FAIL:-}" ]]; then
       write_task "${id}" "failed" "fake download failed" "${target_dir}"
+    elif [[ -n "${FAKE_SIDECAR_DEPOT_FAILS:-}" && "${attempt}" -le "${FAKE_SIDECAR_DEPOT_FAILS}" ]]; then
+      write_task "${id}" "failed" "fake depot transient failure" "${target_dir}"
     else
       if [[ -n "${FAKE_SIDECAR_DEPOT_GAME_ROOT:-}" ]]; then
         target_dir="${target_dir}/game"
@@ -128,8 +147,17 @@ case "${method} ${path_part}" in
     id="$(next_task_id)"
     target_dir="$(jq -r '.targetDir' <<< "${data}")"
     item_id="$(jq -r '.itemId' <<< "${data}")"
+    count_file="${state_dir}/workshop_${item_id}_attempts"
+    attempt=1
+    if [[ -f "${count_file}" ]]; then
+      attempt="$(<"${count_file}")"
+      attempt=$((attempt + 1))
+    fi
+    printf '%s\n' "${attempt}" > "${count_file}"
     if [[ -n "${FAKE_SIDECAR_UPDATE_FAIL:-}" ]]; then
       write_task "${id}" "failed" "fake workshop failed" "${target_dir}/${item_id}"
+    elif [[ -n "${FAKE_SIDECAR_WORKSHOP_FAILS:-}" && "${attempt}" -le "${FAKE_SIDECAR_WORKSHOP_FAILS}" ]]; then
+      write_task "${id}" "failed" "fake workshop transient failure" "${target_dir}/${item_id}"
     else
       mkdir -p "${target_dir}/${item_id}/common" "${target_dir}/${item_id}/gfx"
       printf 'keep\n' > "${target_dir}/${item_id}/common/mod.txt"
@@ -149,11 +177,16 @@ case "${method} ${path_part}" in
 esac
 EOF
 
-  cat > "${bin_dir}/fake-pruner" <<'EOF'
+cat > "${bin_dir}/fake-pruner" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
 printf '%s\n' "$*" >> "${FAKE_PRUNER_LOG:?}"
+
+if [[ -n "${FAKE_PRUNER_FAIL_PATTERN:-}" && "$*" == *"${FAKE_PRUNER_FAIL_PATTERN}"* ]]; then
+  echo "fake pruner failure for ${FAKE_PRUNER_FAIL_PATTERN}" >&2
+  exit 82
+fi
 
 report_dir=""
 args=("$@")
@@ -186,6 +219,7 @@ run_update() {
     CK3QQBOT_STEAMCMD_API_URL="http://fake-sidecar:18032" \
     CK3QQBOT_STEAMCMD_INTERNAL_TOKEN="internal-test-token" \
     CK3QQBOT_STEAMCMD_TASK_POLL_SEC=0 \
+    CK3QQBOT_STEAMCMD_RETRY_BACKOFF_SEC=0 \
     CK3QQBOT_BASE_GAME_DIR="${tmp}/knowledge/base_game" \
     CK3QQBOT_WORKSHOP_DIR="${tmp}/knowledge/workshop_mods" \
     CK3QQBOT_STEAM_USER="test-user" \
@@ -332,6 +366,30 @@ test_empty_base_game_depots_skips_base_game_downloads() {
   assert_contains "${tmp}/knowledge/SUMMARY.txt" "BaseGameDepots: "
 }
 
+test_download_retries_failed_item_in_place() {
+  local tmp
+  tmp="$(setup_tmp)"
+  confirm_runtime_when_updating "${tmp}"
+
+  run_update "${tmp}" \
+    FAKE_SIDECAR_DEPOT_FAILS=2 \
+    FAKE_SIDECAR_WORKSHOP_FAILS=2 \
+    CK3QQBOT_BASE_GAME_DEPOT_IDS="1158311" \
+    CK3QQBOT_WORKSHOP_MOD_IDS="111" \
+    CK3QQBOT_STEAMCMD_DEPOT_ATTEMPTS=5 \
+    CK3QQBOT_STEAMCMD_WORKSHOP_ATTEMPTS=5 \
+    CK3QQBOT_PRUNE_DRY_RUN=true \
+    CK3QQBOT_MIN_FREE_KIB=0
+
+  assert_exists "${tmp}/update-state/READY"
+  assert_line_count "${tmp}/sidecar.log" "POST /v1/internal/tasks/download-depot" 3
+  assert_line_count "${tmp}/sidecar.log" "POST /v1/internal/tasks/download-workshop" 3
+  assert_exists "${tmp}/knowledge/base_game/common/script_1158311.txt"
+  assert_exists "${tmp}/knowledge/workshop_mods/111/common/mod.txt"
+  assert_contains "${tmp}/knowledge/SUMMARY.txt" "DepotAttempts: 5"
+  assert_contains "${tmp}/knowledge/SUMMARY.txt" "WorkshopAttempts: 5"
+}
+
 test_steam_failure_clears_update_markers_and_records_failed_marker() {
   local tmp
   tmp="$(setup_tmp)"
@@ -351,6 +409,45 @@ test_steam_failure_clears_update_markers_and_records_failed_marker() {
   assert_missing "${tmp}/knowledge/READY"
   assert_contains "${tmp}/update-state/FAILED" "failed_at="
   assert_contains "${tmp}/update-state/FAILED" "exit_code=37"
+  assert_contains "${tmp}/update-state/FAILED" "failed_phase=download_base_game_depot"
+  assert_contains "${tmp}/update-state/FAILED" "failed_item_kind=base_game_depot"
+  assert_contains "${tmp}/update-state/FAILED" "failed_item=1158311"
+  assert_contains "${tmp}/update-state/FAILED" "failed_attempt=5"
+  assert_contains "${tmp}/update-state/FAILED" "failed_max_attempts=5"
+  assert_contains "${tmp}/update-state/FAILED" "planned_base_game_depots=1158311"
+  assert_contains "${tmp}/update-state/FAILED" "completed_base_game_downloads="
+  assert_contains "${tmp}/update-state/FAILED" "remaining_base_game_depots=1158311"
+  assert_line_count "${tmp}/sidecar.log" "POST /v1/internal/tasks/download-depot" 5
+}
+
+test_prune_failure_records_completed_download_and_remaining_item() {
+  local tmp
+  tmp="$(setup_tmp)"
+  confirm_runtime_when_updating "${tmp}"
+
+  if run_update "${tmp}" \
+    FAKE_PRUNER_FAIL_PATTERN="base_game:single:${tmp}/knowledge/base_game" \
+    CK3QQBOT_BASE_GAME_DEPOT_IDS="1158311" \
+    CK3QQBOT_WORKSHOP_MOD_IDS="111" \
+    CK3QQBOT_PRUNE_DRY_RUN=false \
+    CK3QQBOT_MIN_FREE_KIB=0; then
+    fail "expected updater to fail during base game prune"
+  fi
+
+  assert_exists "${tmp}/update-state/FAILED"
+  assert_missing "${tmp}/update-state/READY"
+  assert_contains "${tmp}/update-state/FAILED" "exit_code=82"
+  assert_contains "${tmp}/update-state/FAILED" "failed_phase=prune_base_game"
+  assert_contains "${tmp}/update-state/FAILED" "failed_item_kind=base_game_depot"
+  assert_contains "${tmp}/update-state/FAILED" "failed_item=1158311"
+  assert_contains "${tmp}/update-state/FAILED" "failed_label=prune base_game 1158311"
+  assert_contains "${tmp}/update-state/FAILED" "planned_base_game_depots=1158311"
+  assert_contains "${tmp}/update-state/FAILED" "planned_workshop_mods=111"
+  assert_contains "${tmp}/update-state/FAILED" "completed_base_game_downloads=1158311"
+  assert_contains "${tmp}/update-state/FAILED" "completed_base_game_prunes="
+  assert_contains "${tmp}/update-state/FAILED" "completed_workshop_downloads="
+  assert_contains "${tmp}/update-state/FAILED" "remaining_base_game_depots=1158311"
+  assert_contains "${tmp}/update-state/FAILED" "remaining_workshop_mods=111"
 }
 
 test_login_check_failure_does_not_start_update() {
@@ -436,8 +533,10 @@ test_success_flow
 test_clean_before_update_removes_old_managed_files
 test_base_game_prunes_game_subdir_when_depot_uses_ck3_layout
 test_empty_base_game_depots_skips_base_game_downloads
+test_download_retries_failed_item_in_place
 test_login_check_failure_does_not_start_update
 test_steam_failure_clears_update_markers_and_records_failed_marker
+test_prune_failure_records_completed_download_and_remaining_item
 test_disk_guard_runs_before_marker
 test_existing_marker_refuses_to_run
 test_existing_entry_lock_refuses_to_run

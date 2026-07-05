@@ -10,6 +10,9 @@ runtime_confirm_timeout_sec="${CK3QQBOT_RUNTIME_CONFIRM_TIMEOUT_SEC:-120}"
 runtime_confirm_poll_sec="${CK3QQBOT_RUNTIME_CONFIRM_POLL_SEC:-1}"
 steamcmd_progress_interval_sec="${CK3QQBOT_STEAMCMD_PROGRESS_INTERVAL_SEC:-30}"
 steamcmd_task_poll_sec="${CK3QQBOT_STEAMCMD_TASK_POLL_SEC:-2}"
+steamcmd_depot_attempts="${CK3QQBOT_STEAMCMD_DEPOT_ATTEMPTS:-5}"
+steamcmd_workshop_attempts="${CK3QQBOT_STEAMCMD_WORKSHOP_ATTEMPTS:-5}"
+steamcmd_retry_backoff_sec="${CK3QQBOT_STEAMCMD_RETRY_BACKOFF_SEC:-30}"
 updating_marker="${update_state_dir}/.updating"
 update_lock_dir="${update_state_dir}/.update-lock"
 runtime_confirm_marker="${update_state_dir}/.runtime-confirm"
@@ -31,6 +34,23 @@ max_delete_ratio="${CK3QQBOT_MAX_DELETE_RATIO:-0.95}"
 delete_empty_dirs="${CK3QQBOT_DELETE_EMPTY_DIRS:-true}"
 have_update_lock=false
 created_update_marker=false
+current_phase="startup"
+current_item_kind=""
+current_item=""
+current_attempt=""
+current_max_attempts=""
+failed_phase=""
+failed_item_kind=""
+failed_item=""
+failed_label=""
+planned_base_game_depots=""
+planned_workshop_mods=""
+completed_base_game_downloads=""
+completed_workshop_downloads=""
+completed_base_game_prunes=""
+completed_workshop_prunes=""
+declare -a base_game_depot_list=()
+declare -a workshop_mod_list=()
 
 mkdir -p "${knowledge_dir}" "${update_state_dir}" "${report_dir}"
 
@@ -65,8 +85,158 @@ bool_arg() {
   esac
 }
 
+validate_positive_int() {
+  local name="$1"
+  local value="$2"
+
+  case "${value}" in
+    '' | *[!0-9]*)
+      echo "${name} must be a positive integer, got ${value}" >&2
+      exit 33
+      ;;
+  esac
+
+  if (( value <= 0 )); then
+    echo "${name} must be greater than 0" >&2
+    exit 33
+  fi
+}
+
+validate_nonnegative_int() {
+  local name="$1"
+  local value="$2"
+
+  case "${value}" in
+    '' | *[!0-9]*)
+      echo "${name} must be a non-negative integer, got ${value}" >&2
+      exit 33
+      ;;
+  esac
+}
+
 append_marker() {
   printf '%s=%s\n' "$1" "$2" >> "${updating_marker}"
+}
+
+append_csv() {
+  local current="$1"
+  local value="$2"
+
+  if [[ -z "${value}" ]]; then
+    printf '%s\n' "${current}"
+  elif [[ -z "${current}" ]]; then
+    printf '%s\n' "${value}"
+  else
+    printf '%s,%s\n' "${current}" "${value}"
+  fi
+}
+
+join_csv() {
+  local output=""
+  local item
+
+  for item in "$@"; do
+    if [[ -z "${item}" ]]; then
+      continue
+    fi
+    output="$(append_csv "${output}" "${item}")"
+  done
+  printf '%s\n' "${output}"
+}
+
+csv_contains() {
+  local csv="$1"
+  local needle="$2"
+  local item
+  local -a _csv_items=()
+
+  IFS=',' read -r -a _csv_items <<< "${csv}"
+  for item in "${_csv_items[@]}"; do
+    if [[ "${item}" == "${needle}" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+remaining_unfinished() {
+  local completed_csv="$1"
+  shift
+  local output=""
+  local item
+
+  for item in "$@"; do
+    if [[ -z "${item}" ]]; then
+      continue
+    fi
+    if ! csv_contains "${completed_csv}" "${item}"; then
+      output="$(append_csv "${output}" "${item}")"
+    fi
+  done
+
+  printf '%s\n' "${output}"
+}
+
+set_phase() {
+  current_phase="$1"
+}
+
+set_current_item() {
+  current_item_kind="$1"
+  current_item="$2"
+  current_attempt="${3:-}"
+  current_max_attempts="${4:-}"
+}
+
+clear_current_item() {
+  current_item_kind=""
+  current_item=""
+  current_attempt=""
+  current_max_attempts=""
+}
+
+record_completed_download() {
+  local kind="$1"
+  local item="$2"
+
+  case "${kind}" in
+    base_game_depot)
+      completed_base_game_downloads="$(append_csv "${completed_base_game_downloads}" "${item}")"
+      ;;
+    workshop_mod)
+      completed_workshop_downloads="$(append_csv "${completed_workshop_downloads}" "${item}")"
+      ;;
+  esac
+}
+
+record_completed_prune() {
+  local kind="$1"
+  local item="$2"
+
+  case "${kind}" in
+    base_game_depot)
+      completed_base_game_prunes="$(append_csv "${completed_base_game_prunes}" "${item}")"
+      ;;
+    workshop_mod)
+      completed_workshop_prunes="$(append_csv "${completed_workshop_prunes}" "${item}")"
+      ;;
+  esac
+}
+
+record_failure_context() {
+  local label="$1"
+
+  failed_phase="${current_phase}"
+  failed_item_kind="${current_item_kind}"
+  failed_item="${current_item}"
+  failed_label="${label}"
+}
+
+clear_failure_context() {
+  failed_phase=""
+  failed_item_kind=""
+  failed_item=""
+  failed_label=""
 }
 
 release_update_lock() {
@@ -149,10 +319,29 @@ wait_runtime_confirm() {
 mark_update_failed() {
   local exit_code="$1"
   local failed_marker="${update_state_dir}/FAILED"
+  local remaining_base_game
+  local remaining_workshop
 
   if [[ "${created_update_marker}" == "true" && -e "${updating_marker}" ]]; then
+    remaining_base_game="$(remaining_unfinished "${completed_base_game_prunes}" "${base_game_depot_list[@]}")"
+    remaining_workshop="$(remaining_unfinished "${completed_workshop_prunes}" "${workshop_mod_list[@]}")"
+
     append_marker failed_at "$(date -u +%FT%TZ)"
     append_marker exit_code "${exit_code}"
+    append_marker failed_phase "${failed_phase:-${current_phase}}"
+    append_marker failed_item_kind "${failed_item_kind:-${current_item_kind}}"
+    append_marker failed_item "${failed_item:-${current_item}}"
+    append_marker failed_label "${failed_label}"
+    append_marker failed_attempt "${current_attempt}"
+    append_marker failed_max_attempts "${current_max_attempts}"
+    append_marker planned_base_game_depots "${planned_base_game_depots}"
+    append_marker planned_workshop_mods "${planned_workshop_mods}"
+    append_marker completed_base_game_downloads "${completed_base_game_downloads}"
+    append_marker completed_workshop_downloads "${completed_workshop_downloads}"
+    append_marker completed_base_game_prunes "${completed_base_game_prunes}"
+    append_marker completed_workshop_prunes "${completed_workshop_prunes}"
+    append_marker remaining_base_game_depots "${remaining_base_game}"
+    append_marker remaining_workshop_mods "${remaining_workshop}"
     cp -f "${updating_marker}" "${failed_marker}"
     rm -f "${updating_marker}" "${runtime_confirm_marker}"
   fi
@@ -246,7 +435,6 @@ run_sidecar_task() {
   local response
   local task_id
 
-  echo "steamcmd ${label}"
   check_free_space "${knowledge_dir}"
 
   response="$(sidecar_post "${endpoint}" "${body}")"
@@ -260,6 +448,38 @@ run_sidecar_task() {
   if ! wait_sidecar_task "${task_id}" "${label}"; then
     return 37
   fi
+}
+
+run_sidecar_task_with_attempts() {
+  local label="$1"
+  local endpoint="$2"
+  local body="$3"
+  local attempts="$4"
+  local attempt
+
+  for ((attempt = 1; attempt <= attempts; attempt++)); do
+    current_attempt="${attempt}"
+    current_max_attempts="${attempts}"
+    if (( attempts == 1 )); then
+      echo "steamcmd ${label}"
+    else
+      echo "steamcmd ${label} attempt ${attempt}/${attempts}"
+    fi
+
+    if run_sidecar_task "${label}" "${endpoint}" "${body}"; then
+      return 0
+    fi
+
+    if (( attempt >= attempts )); then
+      echo "steamcmd ${label} failed after ${attempts} attempts" >&2
+      return 37
+    fi
+
+    echo "steamcmd ${label} failed on attempt ${attempt}/${attempts}; retrying in-place without cleaning" >&2
+    if (( steamcmd_retry_backoff_sec > 0 )); then
+      sleep "${steamcmd_retry_backoff_sec}"
+    fi
+  done
 }
 
 check_steam_login() {
@@ -305,12 +525,19 @@ download_base_game_depot() {
     --arg manifestId "${manifest_id}" \
     --arg targetDir "${base_game_dir}" \
     '{appId: $appId, depotId: $depotId, targetDir: $targetDir} + (if $manifestId == "" then {} else {manifestId: $manifestId} end)')"
-  run_sidecar_task "download_depot ${app_id} ${depot_id}" "/v1/internal/tasks/download-depot" "${body}"
+  set_phase "download_base_game_depot"
+  set_current_item "base_game_depot" "${depot_spec}" "" "${steamcmd_depot_attempts}"
+  if ! run_sidecar_task_with_attempts "download_depot ${app_id} ${depot_id}" "/v1/internal/tasks/download-depot" "${body}" "${steamcmd_depot_attempts}"; then
+    record_failure_context "download_depot ${app_id} ${depot_id}"
+    return 37
+  fi
 
   if [[ ! -d "${base_game_dir}" ]] || [[ -z "$(find "${base_game_dir}" -mindepth 1 -print -quit)" ]]; then
     echo "download_depot did not produce files in expected base game directory: ${base_game_dir}" >&2
+    record_failure_context "download_depot ${app_id} ${depot_id}"
     exit 41
   fi
+  record_completed_download "base_game_depot" "${depot_spec}"
 }
 
 run_pruner() {
@@ -332,6 +559,24 @@ run_pruner() {
     -dry-run="${prune_dry_run}" \
     -max-delete-ratio "${max_delete_ratio}" \
     -delete-empty-dirs="${delete_empty_dirs}"
+}
+
+download_workshop_mod() {
+  local mod_id="$1"
+  local body
+
+  body="$(jq -cn \
+    --arg appId "${app_id}" \
+    --arg itemId "${mod_id}" \
+    --arg targetDir "${workshop_dir}" \
+    '{appId: $appId, itemId: $itemId, targetDir: $targetDir}')"
+  set_phase "download_workshop_mod"
+  set_current_item "workshop_mod" "${mod_id}" "" "${steamcmd_workshop_attempts}"
+  if ! run_sidecar_task_with_attempts "workshop_download_item ${app_id} ${mod_id}" "/v1/internal/tasks/download-workshop" "${body}" "${steamcmd_workshop_attempts}"; then
+    record_failure_context "workshop_download_item ${app_id} ${mod_id}"
+    return 37
+  fi
+  record_completed_download "workshop_mod" "${mod_id}"
 }
 
 base_game_prune_root() {
@@ -393,6 +638,8 @@ write_summary() {
     printf 'CleanBeforeUpdate: %s\n' "${clean_before_update}"
     printf 'PruneDryRun: %s\n' "${prune_dry_run}"
     printf 'ReportDir: %s\n' "${report_dir}"
+    printf 'DepotAttempts: %s\n' "${steamcmd_depot_attempts}"
+    printf 'WorkshopAttempts: %s\n' "${steamcmd_workshop_attempts}"
   } > "${summary}"
 }
 
@@ -404,11 +651,25 @@ ensure_knowledge_runtime_readable() {
 trap 'exit_code=$?; trap - EXIT; on_exit "${exit_code}"; exit "${exit_code}"' EXIT
 
 acquire_update_lock
+validate_positive_int "CK3QQBOT_STEAMCMD_DEPOT_ATTEMPTS" "${steamcmd_depot_attempts}"
+validate_positive_int "CK3QQBOT_STEAMCMD_WORKSHOP_ATTEMPTS" "${steamcmd_workshop_attempts}"
+validate_nonnegative_int "CK3QQBOT_STEAMCMD_RETRY_BACKOFF_SEC" "${steamcmd_retry_backoff_sec}"
 check_free_space "${knowledge_dir}"
 mkdir -p "${base_game_dir}" "${workshop_dir}"
 ensure_steam_user
 ensure_sidecar_config
 check_steam_login
+
+if [[ -n "${base_game_depot_ids}" ]]; then
+  normalized_depot_ids="${base_game_depot_ids//,/ }"
+  read -r -a base_game_depot_list <<< "${normalized_depot_ids}"
+fi
+if [[ -n "${workshop_mod_ids}" ]]; then
+  normalized_mod_ids="${workshop_mod_ids//,/ }"
+  read -r -a workshop_mod_list <<< "${normalized_mod_ids}"
+fi
+planned_base_game_depots="$(join_csv "${base_game_depot_list[@]}")"
+planned_workshop_mods="$(join_csv "${workshop_mod_list[@]}")"
 
 rm -f "${runtime_confirm_marker}"
 ensure_no_active_update
@@ -416,43 +677,59 @@ printf 'started_at=%s\n' "$(date -u +%FT%TZ)" > "${updating_marker}"
 created_update_marker=true
 append_marker app_id "${app_id}"
 append_marker report_dir "${report_dir}"
+append_marker planned_base_game_depots "${planned_base_game_depots}"
+append_marker planned_workshop_mods "${planned_workshop_mods}"
+append_marker depot_attempts "${steamcmd_depot_attempts}"
+append_marker workshop_attempts "${steamcmd_workshop_attempts}"
+set_phase "wait_runtime_confirm"
 wait_runtime_confirm
+set_phase "clean_before_download"
 clean_before_download
 
-if [[ -n "${base_game_depot_ids}" ]]; then
-  normalized_depot_ids="${base_game_depot_ids//,/ }"
-  read -r -a depot_ids <<< "${normalized_depot_ids}"
-  for depot_spec in "${depot_ids[@]}"; do
+if [[ "${#base_game_depot_list[@]}" -gt 0 ]]; then
+  for depot_spec in "${base_game_depot_list[@]}"; do
     if [[ -z "${depot_spec}" ]]; then
       continue
     fi
     download_base_game_depot "${depot_spec}"
+    set_phase "prune_base_game"
+    set_current_item "base_game_depot" "${depot_spec}"
+    record_failure_context "prune base_game ${depot_spec}"
     run_pruner "base_game" "base_game" "$(base_game_prune_root)"
+    record_completed_prune "base_game_depot" "${depot_spec}"
+    clear_failure_context
+    clear_current_item
   done
 fi
 
-if [[ -n "${workshop_mod_ids}" ]]; then
-  normalized_mod_ids="${workshop_mod_ids//,/ }"
-  read -r -a mod_ids <<< "${normalized_mod_ids}"
-
-  for mod_id in "${mod_ids[@]}"; do
+if [[ "${#workshop_mod_list[@]}" -gt 0 ]]; then
+  for mod_id in "${workshop_mod_list[@]}"; do
     if [[ -z "${mod_id}" ]]; then
       continue
     fi
-    body="$(jq -cn \
-      --arg appId "${app_id}" \
-      --arg itemId "${mod_id}" \
-      --arg targetDir "${workshop_dir}" \
-      '{appId: $appId, itemId: $itemId, targetDir: $targetDir}')"
-    run_sidecar_task "workshop_download_item ${app_id} ${mod_id}" "/v1/internal/tasks/download-workshop" "${body}"
+    download_workshop_mod "${mod_id}"
+    set_phase "prune_workshop_mod"
+    set_current_item "workshop_mod" "${mod_id}"
+    record_failure_context "prune workshop ${mod_id}"
     run_pruner "workshop_${mod_id}" "workshop_mod" "${workshop_dir}/${mod_id}"
+    record_completed_prune "workshop_mod" "${mod_id}"
+    clear_failure_context
+    clear_current_item
   done
 fi
 
+set_phase "write_manifest"
+clear_current_item
+record_failure_context "write manifest"
 write_manifest
+record_failure_context "write summary"
 write_summary
+set_phase "ensure_knowledge_runtime_readable"
+record_failure_context "ensure knowledge runtime readable"
 ensure_knowledge_runtime_readable
 
+set_phase "write_ready"
+record_failure_context "write ready marker"
 rm -f "${update_state_dir}/FAILED"
 rm -f "${knowledge_dir}/READY"
 printf 'ready_at=%s\n' "$(date -u +%FT%TZ)" > "${ready_marker}"
