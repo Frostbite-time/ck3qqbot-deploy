@@ -231,6 +231,15 @@ assert_missing "${tmp}/steam/Steam/steamapps/workshop/downloads/state_1158310_11
 assert_exists "${tmp}/steam/Steam/steamapps/workshop/content/1158310"
 assert_exists "${tmp}/steam/Steam/steamapps/workshop/appworkshop_1079000.acf"
 
+rm -f "${tmp}/steam/Steam/steamapps/workshop/content/1158310"
+printf '%s' "${tmp}/knowledge/workshop_broken" > "${tmp}/steam/Steam/steamapps/workshop/content/1158310"
+broken_target="${tmp}/knowledge/workshop_broken"
+broken_body="$(jq -cn --arg targetDir "${broken_target}" '{appId:"1158310", itemId:"101", targetDir:$targetDir}')"
+broken_id="$(post_task "/v1/internal/tasks/download-workshop" "${broken_body}" | jq -r '.id')"
+wait_task "${broken_id}"
+assert_exists "${broken_target}/101/item.txt"
+[[ -L "${tmp}/steam/Steam/steamapps/workshop/content/1158310" ]] || fail "expected broken workshop content file to be replaced with sidecar symlink"
+
 first_target="${tmp}/knowledge/workshop_a"
 first_body="$(jq -cn --arg targetDir "${first_target}" '{appId:"1158310", itemId:"111", targetDir:$targetDir}')"
 first_id="$(post_task "/v1/internal/tasks/download-workshop" "${first_body}" | jq -r '.id')"

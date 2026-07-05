@@ -329,21 +329,24 @@ function ensureWorkshopTarget(appId: string, targetDir: string) {
     const wanted = fs.realpathSync(targetDir);
 
     if (!existingStat.isSymbolicLink()) {
-      throw new Error(`workshop content path exists and is not sidecar-managed symlink: ${contentDir}`);
-    }
+      if (existingStat.isDirectory()) {
+        throw new Error(`workshop content path exists and is not sidecar-managed symlink: ${contentDir}`);
+      }
+      fs.rmSync(contentDir, { force: true });
+    } else {
+      let existing: string | undefined;
+      try {
+        existing = fs.realpathSync(contentDir);
+      } catch {
+        existing = undefined;
+      }
 
-    let existing: string | undefined;
-    try {
-      existing = fs.realpathSync(contentDir);
-    } catch {
-      existing = undefined;
-    }
+      if (existing === wanted) {
+        return;
+      }
 
-    if (existing === wanted) {
-      return;
+      fs.unlinkSync(contentDir);
     }
-
-    fs.unlinkSync(contentDir);
   }
 
   fs.symlinkSync(targetDir, contentDir, "dir");
